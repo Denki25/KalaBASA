@@ -1,0 +1,15 @@
+{
+  "name": "kalabasa-contract",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "fixtures": "node make-fixtures.js",
+    "test": "node test.js",
+    "check-samples": "node check-samples.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "zod": "^3.23.8"
+  }
+}

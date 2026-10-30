@@ -1,0 +1,253 @@
+{
+  "set_id": "set_04_formatting_only",
+  "scenario": "formatting_only",
+  "uploaded_documents": [
+    "application_form",
+    "dti_certificate",
+    "barangay_clearance",
+    "lease_contract",
+    "community_tax_certificate"
+  ],
+  "expected_missing_documents": [],
+  "expected_findings": [],
+  "extracted_fields": [
+    {
+      "field": "owner_name",
+      "value": "Juan Carlos P. Dela Cruz",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Juan Carlos P. Dela Cruz"
+    },
+    {
+      "field": "tin",
+      "value": "531-774-290-000",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "531-774-290-000"
+    },
+    {
+      "field": "owner_residence_address",
+      "value": "Purok 4, Barangay San Vicente, City of Bagong Dalisay, Pampanga",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Purok 4, Barangay San Vicente, City of Bagong Dalisay, Pampanga"
+    },
+    {
+      "field": "business_name",
+      "value": "JC Hardware & Construction Supply",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "JC Hardware & Construction Supply"
+    },
+    {
+      "field": "nature_of_business",
+      "value": "Retail - Hardware and Construction Materials",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Retail - Hardware and Construction Materials"
+    },
+    {
+      "field": "business_address",
+      "value": "Blk 7 Lot 12 Sampaguita St., Brgy. Sto. Cristo, Bagong Dalisay City, Pampanga 2000",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Blk 7 Lot 12 Sampaguita St., Brgy. Sto. Cristo, Bagong Dalisay City, Pampanga 2000"
+    },
+    {
+      "field": "capital_investment",
+      "value": "PHP 150,000.00",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "PHP 150,000.00"
+    },
+    {
+      "field": "application_date",
+      "value": "09 October 2026",
+      "document": "application_form",
+      "page": 2,
+      "source_text": "09 October 2026"
+    },
+    {
+      "field": "dti_registration_no",
+      "value": "BN-2026-0150374",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "BN-2026-0150374"
+    },
+    {
+      "field": "owner_name",
+      "value": "DELA CRUZ, JUAN CARLOS P.",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "DELA CRUZ, JUAN CARLOS P."
+    },
+    {
+      "field": "business_name",
+      "value": "JC HARDWARE AND CONSTRUCTION SUPPLY",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "JC HARDWARE AND CONSTRUCTION SUPPLY"
+    },
+    {
+      "field": "business_address",
+      "value": "Block 7, Lot 12, Sampaguita Street, Barangay Santo Cristo, City of Bagong Dalisay, Pampanga",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "Block 7, Lot 12, Sampaguita Street, Barangay Santo Cristo, City of Bagong Dalisay, Pampanga"
+    },
+    {
+      "field": "registration_date",
+      "value": "Sep. 11, 2026",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "Sep. 11, 2026"
+    },
+    {
+      "field": "expiry_date",
+      "value": "Sep. 11, 2031",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "Sep. 11, 2031"
+    },
+    {
+      "field": "clearance_no",
+      "value": "BC-2026-SC-00855",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "BC-2026-SC-00855"
+    },
+    {
+      "field": "business_name",
+      "value": "JC Hardware and Construction Supply",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "JC Hardware and Construction Supply"
+    },
+    {
+      "field": "owner_name",
+      "value": "JUAN CARLOS P. DELA CRUZ",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "JUAN CARLOS P. DELA CRUZ"
+    },
+    {
+      "field": "business_address",
+      "value": "BLK 7 LOT 12 SAMPAGUITA STREET, BARANGAY STO. CRISTO, BAGONG DALISAY CITY",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "BLK 7 LOT 12 SAMPAGUITA STREET, BARANGAY STO. CRISTO, BAGONG DALISAY CITY"
+    },
+    {
+      "field": "issue_date",
+      "value": "Oct. 6, 2026",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "Oct. 6, 2026"
+    },
+    {
+      "field": "valid_until",
+      "value": "Apr. 6, 2027",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "Apr. 6, 2027"
+    },
+    {
+      "field": "lessor_name",
+      "value": "Corazon V. Pineda",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Corazon V. Pineda"
+    },
+    {
+      "field": "owner_name",
+      "value": "Juan Carlos Dela Cruz",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Juan Carlos Dela Cruz"
+    },
+    {
+      "field": "business_address",
+      "value": "Block 7 Lot 12 Sampaguita St., Barangay Sto. Cristo, City of Bagong Dalisay, Pampanga 2000",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Block 7 Lot 12 Sampaguita St., Barangay Sto. Cristo, City of Bagong Dalisay, Pampanga 2000"
+    },
+    {
+      "field": "lease_start",
+      "value": "October 1, 2026",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "October 1, 2026"
+    },
+    {
+      "field": "lease_end",
+      "value": "September 30, 2028",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "September 30, 2028"
+    },
+    {
+      "field": "monthly_rent",
+      "value": "Php 18,000.00",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Php 18,000.00"
+    },
+    {
+      "field": "execution_date",
+      "value": "September 29, 2026",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "29th day of September, 2026"
+    },
+    {
+      "field": "notarization_date",
+      "value": "September 30, 2026",
+      "document": "lease_contract",
+      "page": 3,
+      "source_text": "30th day of September, 2026"
+    },
+    {
+      "field": "notary_name",
+      "value": "Atty. Ricardo T. Bautista",
+      "document": "lease_contract",
+      "page": 3,
+      "source_text": "Atty. Ricardo T. Bautista"
+    },
+    {
+      "field": "ctc_no",
+      "value": "CCC2026-00346118",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "CCC2026-00346118"
+    },
+    {
+      "field": "owner_name",
+      "value": "DELA CRUZ, JUAN CARLOS",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "DELA CRUZ, JUAN CARLOS"
+    },
+    {
+      "field": "tin",
+      "value": "531774290000",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "531774290000"
+    },
+    {
+      "field": "owner_residence_address",
+      "value": "Purok 4, Barangay San Vicente, City of Bagong Dalisay, Pampanga",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "Purok 4, Barangay San Vicente, City of Bagong Dalisay, Pampanga"
+    },
+    {
+      "field": "issue_date",
+      "value": "Jan. 12, 2026",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "Jan. 12, 2026"
+    }
+  ]
+}

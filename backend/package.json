@@ -1,0 +1,14 @@
+{
+  "name": "kalabasa-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@napi-rs/canvas": "^0.1.80",
+    "kalabasa-contract": "*",
+    "pdfjs-dist": "^5.4.394",
+    "tesseract.js": "^6.0.1",
+    "zod": "^3.23.8"
+  }
+}

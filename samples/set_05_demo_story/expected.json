@@ -1,0 +1,289 @@
+{
+  "set_id": "set_05_demo_story",
+  "scenario": "address_mismatch_and_missing_notarization_date",
+  "uploaded_documents": [
+    "application_form",
+    "dti_certificate",
+    "barangay_clearance",
+    "lease_contract",
+    "community_tax_certificate"
+  ],
+  "expected_missing_documents": [],
+  "expected_findings": [
+    {
+      "finding_id": "set_05-F1",
+      "type": "cross_document_mismatch",
+      "severity": "high",
+      "rule_id": "R-XDOC-ADDRESS",
+      "field": "business_address",
+      "message": "Barangay on the clearance (San Jose) differs from the barangay on the application form, DTI certificate and lease (San Nicolas). The clearance was issued by a different barangay than the one where the business is located.",
+      "evidence": [
+        {
+          "document": "application_form",
+          "page": 1,
+          "source_text": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000"
+        },
+        {
+          "document": "barangay_clearance",
+          "page": 1,
+          "source_text": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Jose, City of Bagong Dalisay, Pampanga 2000"
+        }
+      ]
+    },
+    {
+      "finding_id": "set_05-F2",
+      "type": "missing_field",
+      "severity": "high",
+      "rule_id": "R-FLD-LEASE-NOTARY-DATE",
+      "field": "notarization_date",
+      "message": "The lease's acknowledgment page has no notarization date (the day and month are left blank), although the notary name and document numbers are filled in. The contract date on page 1 must not be used as a substitute.",
+      "evidence": [
+        {
+          "document": "lease_contract",
+          "page": 3,
+          "source_text": "this ____ day of ______________, 2026"
+        }
+      ]
+    }
+  ],
+  "extracted_fields": [
+    {
+      "field": "owner_name",
+      "value": "Rosario G. Aquino",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Rosario G. Aquino"
+    },
+    {
+      "field": "tin",
+      "value": "198-443-615-000",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "198-443-615-000"
+    },
+    {
+      "field": "owner_residence_address",
+      "value": "6 Katipunan Road, Barangay Sta. Maria, City of Bagong Dalisay, Pampanga",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "6 Katipunan Road, Barangay Sta. Maria, City of Bagong Dalisay, Pampanga"
+    },
+    {
+      "field": "business_name",
+      "value": "Aquino Laundry Hub",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Aquino Laundry Hub"
+    },
+    {
+      "field": "nature_of_business",
+      "value": "Services - Laundry and Dry Cleaning",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Services - Laundry and Dry Cleaning"
+    },
+    {
+      "field": "business_address",
+      "value": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000"
+    },
+    {
+      "field": "capital_investment",
+      "value": "PHP 320,000.00",
+      "document": "application_form",
+      "page": 1,
+      "source_text": "PHP 320,000.00"
+    },
+    {
+      "field": "application_date",
+      "value": "October 19, 2026",
+      "document": "application_form",
+      "page": 2,
+      "source_text": "October 19, 2026"
+    },
+    {
+      "field": "dti_registration_no",
+      "value": "BN-2026-0152781",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "BN-2026-0152781"
+    },
+    {
+      "field": "owner_name",
+      "value": "Rosario G. Aquino",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "Rosario G. Aquino"
+    },
+    {
+      "field": "business_name",
+      "value": "Aquino Laundry Hub",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "Aquino Laundry Hub"
+    },
+    {
+      "field": "business_address",
+      "value": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000"
+    },
+    {
+      "field": "registration_date",
+      "value": "September 15, 2026",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "September 15, 2026"
+    },
+    {
+      "field": "expiry_date",
+      "value": "September 15, 2031",
+      "document": "dti_certificate",
+      "page": 1,
+      "source_text": "September 15, 2031"
+    },
+    {
+      "field": "clearance_no",
+      "value": "BC-2026-SJ-00604",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "BC-2026-SJ-00604"
+    },
+    {
+      "field": "business_name",
+      "value": "Aquino Laundry Hub",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "Aquino Laundry Hub"
+    },
+    {
+      "field": "owner_name",
+      "value": "Rosario G. Aquino",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "Rosario G. Aquino"
+    },
+    {
+      "field": "business_address",
+      "value": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Jose, City of Bagong Dalisay, Pampanga 2000",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Jose, City of Bagong Dalisay, Pampanga 2000"
+    },
+    {
+      "field": "issue_date",
+      "value": "October 7, 2026",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "October 7, 2026"
+    },
+    {
+      "field": "valid_until",
+      "value": "April 7, 2027",
+      "document": "barangay_clearance",
+      "page": 1,
+      "source_text": "April 7, 2027"
+    },
+    {
+      "field": "lessor_name",
+      "value": "Danilo F. Castillo",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Danilo F. Castillo"
+    },
+    {
+      "field": "owner_name",
+      "value": "Rosario G. Aquino",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Rosario G. Aquino"
+    },
+    {
+      "field": "business_address",
+      "value": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "Unit 3, Aquino Building, 22 Del Pilar Street, Barangay San Nicolas, City of Bagong Dalisay, Pampanga 2000"
+    },
+    {
+      "field": "lease_start",
+      "value": "October 1, 2026",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "October 1, 2026"
+    },
+    {
+      "field": "lease_end",
+      "value": "September 30, 2029",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "September 30, 2029"
+    },
+    {
+      "field": "monthly_rent",
+      "value": "PHP 28,000.00",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "PHP 28,000.00"
+    },
+    {
+      "field": "execution_date",
+      "value": "September 26, 2026",
+      "document": "lease_contract",
+      "page": 1,
+      "source_text": "26th day of September, 2026"
+    },
+    {
+      "field": "notarization_date",
+      "value": null,
+      "document": "lease_contract",
+      "page": 3,
+      "source_text": "____ day of ______________, 2026"
+    },
+    {
+      "field": "notary_name",
+      "value": "Atty. Elena P. Magtanggol",
+      "document": "lease_contract",
+      "page": 3,
+      "source_text": "Atty. Elena P. Magtanggol"
+    },
+    {
+      "field": "ctc_no",
+      "value": "CCC2026-00502276",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "CCC2026-00502276"
+    },
+    {
+      "field": "owner_name",
+      "value": "Rosario G. Aquino",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "Rosario G. Aquino"
+    },
+    {
+      "field": "tin",
+      "value": "198-443-615-000",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "198-443-615-000"
+    },
+    {
+      "field": "owner_residence_address",
+      "value": "6 Katipunan Road, Barangay Sta. Maria, City of Bagong Dalisay, Pampanga",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "6 Katipunan Road, Barangay Sta. Maria, City of Bagong Dalisay, Pampanga"
+    },
+    {
+      "field": "issue_date",
+      "value": "January 22, 2026",
+      "document": "community_tax_certificate",
+      "page": 1,
+      "source_text": "January 22, 2026"
+    }
+  ]
+}
