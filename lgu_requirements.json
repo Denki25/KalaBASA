@@ -1,0 +1,160 @@
+{
+  "lgu": {
+    "id": "bagong-dalisay-demo",
+    "name": "City of Bagong Dalisay (fictional demo LGU)",
+    "province": "Pampanga",
+    "application_type": "New Business Permit",
+    "note": "Fictional list modelled on a typical BPLO checklist. Replace with the real LGU's published requirements."
+  },
+  "required_documents": [
+    {
+      "rule_id": "R-DOC-001",
+      "document": "application_form",
+      "label": "Business Permit Application Form",
+      "required": true
+    },
+    {
+      "rule_id": "R-DOC-002",
+      "document": "dti_certificate",
+      "label": "DTI Certificate of Business Name Registration",
+      "required": true
+    },
+    {
+      "rule_id": "R-DOC-003",
+      "document": "barangay_clearance",
+      "label": "Barangay Business Clearance",
+      "required": true
+    },
+    {
+      "rule_id": "R-DOC-004",
+      "document": "lease_contract",
+      "label": "Notarized Contract of Lease (or proof of ownership)",
+      "required": true
+    },
+    {
+      "rule_id": "R-DOC-005",
+      "document": "community_tax_certificate",
+      "label": "Community Tax Certificate (Cedula)",
+      "required": true
+    }
+  ],
+  "required_fields": [
+    {
+      "rule_id": "R-FLD-LEASE-NOTARY-DATE",
+      "document": "lease_contract",
+      "field": "notarization_date",
+      "severity": "high",
+      "description": "Lease must carry a complete notarization date on the acknowledgment page. The contract execution date does not count."
+    },
+    {
+      "rule_id": "R-FLD-DTI-EXPIRY",
+      "document": "dti_certificate",
+      "field": "expiry_date",
+      "severity": "medium",
+      "description": "DTI certificate must show a validity date."
+    },
+    {
+      "rule_id": "R-FLD-BRGY-NO",
+      "document": "barangay_clearance",
+      "field": "clearance_no",
+      "severity": "medium",
+      "description": "Clearance number must be present."
+    }
+  ],
+  "cross_document_checks": [
+    {
+      "rule_id": "R-XDOC-OWNER",
+      "field": "owner_name",
+      "documents": [
+        "application_form",
+        "dti_certificate",
+        "barangay_clearance",
+        "lease_contract",
+        "community_tax_certificate"
+      ],
+      "severity": "high"
+    },
+    {
+      "rule_id": "R-XDOC-BIZNAME",
+      "field": "business_name",
+      "documents": [
+        "application_form",
+        "dti_certificate",
+        "barangay_clearance"
+      ],
+      "severity": "high"
+    },
+    {
+      "rule_id": "R-XDOC-ADDRESS",
+      "field": "business_address",
+      "documents": [
+        "application_form",
+        "dti_certificate",
+        "barangay_clearance",
+        "lease_contract"
+      ],
+      "severity": "high"
+    },
+    {
+      "rule_id": "R-XDOC-TIN",
+      "field": "tin",
+      "documents": [
+        "application_form",
+        "community_tax_certificate"
+      ],
+      "severity": "medium"
+    }
+  ],
+  "do_not_compare": [
+    "owner_residence_address"
+  ],
+  "normalization": {
+    "case_insensitive": true,
+    "ignore_punctuation_and_extra_whitespace": true,
+    "ignore_zip_code": true,
+    "synonyms": [
+      [
+        "brgy",
+        "brgy.",
+        "barangay"
+      ],
+      [
+        "st",
+        "st.",
+        "street"
+      ],
+      [
+        "blk",
+        "blk.",
+        "block"
+      ],
+      [
+        "sto",
+        "sto.",
+        "santo"
+      ],
+      [
+        "sta",
+        "sta.",
+        "santa"
+      ],
+      [
+        "&",
+        "and"
+      ],
+      [
+        "php",
+        "p",
+        "peso"
+      ]
+    ],
+    "city_forms": [
+      "City of X",
+      "X City"
+    ],
+    "name_order": "'Surname, Given' equals 'Given Surname'",
+    "middle_initial": "Present on one side and missing on the other is harmless. Two different initials is a mismatch.",
+    "tin": "Strip dashes and spaces before comparing.",
+    "numbers": "House, block, lot and unit numbers must match exactly. 45 vs 54 is a real mismatch, not formatting."
+  }
+}
