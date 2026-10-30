@@ -24,6 +24,7 @@ create table if not exists fields (
   document text not null,
   page integer not null check (page > 0),
   source_text text,
+  presence text check (presence in ('printed', 'blank_printed', 'not_found')),
   confidence text not null check (confidence in ('high', 'medium', 'low')),
   verified boolean not null,
   match text not null check (match in ('exact', 'loose', 'none')),

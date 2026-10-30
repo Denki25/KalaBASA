@@ -16,6 +16,8 @@
     "test:contract": "node contract/test.js ./samples",
     "seed:sample-cache": "node backend/src/extraction/seed-sample-cache.js",
     "start:api": "node backend/src/api/server.js",
+    "dev": "npm --workspace frontend run dev",
+    "build": "npm --workspace frontend run build",
     "extract": "node backend/src/extraction/run.js"
   }
 }

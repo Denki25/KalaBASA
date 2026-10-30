@@ -32,7 +32,8 @@ for (const setName of sets) {
     const isMatch = actual
       && actual.value === field.value
       && actual.page === field.page
-      && actual.source_text === field.source_text;
+      && actual.source_text === field.source_text
+      && actual.presence === (field.value !== null ? "printed" : field.source_text ? "blank_printed" : "not_found");
     if (isMatch) passed++;
     else {
       console.error(`FAIL ${field.document}.${field.field}: expected ${JSON.stringify(field.value)}, got ${JSON.stringify(actual?.value ?? null)}`);

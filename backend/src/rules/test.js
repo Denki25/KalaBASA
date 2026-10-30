@@ -121,12 +121,26 @@ const missingChecklist = [
 ];
 const checklistFinding = checkRequirements(missingChecklist, requirements)[0];
 assert.match(checklistFinding.message, /does not mark it as attached/);
-assert.throws(
-  () => checkRequiredFields([
+const noFormFindings = checkRequirements([], requirements);
+assert.equal(noFormFindings.length, requirements.required_documents.length, "missing documents remain reportable without an application form");
+assert.equal(noFormFindings[0].evidence[0].source_text, null);
+assert.ok(noFormFindings[0].evidence[0].note);
+
+const notFoundFinding = checkRequiredFields([{
+  document: "lease_contract",
+  field: "notarization_date",
+  value: null,
+  page: 3,
+  source_text: null,
+  presence: "not_found",
+}], requirements)[0];
+assert.equal(notFoundFinding.evidence[0].source_text, null);
+assert.match(notFoundFinding.evidence[0].note, /No notarization date was found/);
+
+const omittedFieldFinding = checkRequiredFields([
     { document: "lease_contract", field: "lease_start", value: "October 1, 2026", page: 1, source_text: "October 1, 2026" },
-  ], requirements),
-  /Required extraction lease_contract\.notarization_date is absent/,
-  "missing extraction records must not silently pass required-field checks",
-);
+], requirements).find((finding) => finding.field === "notarization_date");
+assert.ok(omittedFieldFinding, "an omitted required extraction from an uploaded document must be reported");
+assert.equal(omittedFieldFinding.evidence[0].source_text, null);
 
 console.log("PASS address/name/TIN normalization, exact numbers, checklist messaging, and do-not-compare rules");

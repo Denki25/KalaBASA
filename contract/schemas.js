@@ -36,6 +36,7 @@ export const ExtractedFieldCore = z.object({
   document: DocumentType,
   page: z.number().int().min(1),
   source_text: z.string().nullable(),    // exact snippet as printed on that page
+  presence: z.enum(["printed", "blank_printed", "not_found"]).optional(),
 });
 // What the API returns: core + extraction metadata. `verified` and `match` are set by CODE, never by the LLM.
 export const ExtractedField = ExtractedFieldCore.extend({
@@ -50,7 +51,8 @@ export const FINDING_TYPES = ["missing_document", "missing_field", "cross_docume
 export const Evidence = z.object({
   document: DocumentType,
   page: z.number().int().min(1),
-  source_text: z.string(),
+  source_text: z.string().nullable(),
+  note: z.string().optional(),
 });
 export const FindingCore = z.object({
   finding_id: z.string(),

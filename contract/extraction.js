@@ -104,11 +104,17 @@ export async function extractDocument({ document, pages, method = "text_layer", 
   const wanted = FIELDS_BY_DOCUMENT[document];
   const out = parsed.fields
     .filter((f) => wanted.includes(f.field))
-    .map((f) => ({ ...f, document, method, ...verifyField(f, pages) }));
+    .map((f) => ({
+      ...f,
+      presence: f.value !== null ? "printed" : f.source_text ? "blank_printed" : "not_found",
+      document,
+      method,
+      ...verifyField(f, pages),
+    }));
   // Make sure every expected field is present so the rules engine can tell "missing" from "not asked".
   for (const f of wanted) {
     if (!out.some((o) => o.field === f))
-      out.push({ field: f, value: null, document, page: 1, source_text: null, confidence: "low", verified: true, match: "none", method });
+      out.push({ field: f, value: null, document, page: 1, source_text: null, presence: "not_found", confidence: "low", verified: true, match: "none", method });
   }
   return out;
 }

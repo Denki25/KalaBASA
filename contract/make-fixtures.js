@@ -13,7 +13,14 @@ for (const dir of fs.readdirSync(root).filter((d) => d.startsWith("set_")).sort(
     id: `app-${exp.set_id}`, lgu_id: "bagong-dalisay-demo", label: exp.scenario, status: "ready_for_review",
     created_at: "2026-10-19T09:00:00.000Z",
     documents: exp.uploaded_documents.map((d) => ({ document: d, filename: `${d}.pdf`, pages: pagesOf(d), method: "text_layer" })),
-    fields: exp.extracted_fields.map((f) => ({ ...f, confidence: "high", verified: true, match: "exact", method: "text_layer" })),
+    fields: exp.extracted_fields.map((f) => ({
+      ...f,
+      presence: f.value !== null ? "printed" : f.source_text ? "blank_printed" : "not_found",
+      confidence: "high",
+      verified: true,
+      match: "exact",
+      method: "text_layer",
+    })),
     findings: exp.expected_findings,
   });
   fs.writeFileSync(`fixtures/${exp.set_id}.json`, JSON.stringify(app, null, 2));

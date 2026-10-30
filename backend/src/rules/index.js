@@ -22,9 +22,9 @@ export function checkRequirements(uploadedDocs, requirements) {
   for (const rule of requirements.required_documents.filter((item) => item.required)) {
     if (uploaded.has(rule.document)) continue;
     const checklist = checklistEntry(uploadedDocs, rule.document);
-    if (!checklist || !checklist.source_text?.trim() || !Number.isInteger(checklist.page) || checklist.page < 1) {
-      throw new Error(`Missing ${rule.document}: application_form checklist evidence (page and source_text) is required.`);
-    }
+    const hasChecklistEvidence = checklist?.source_text?.trim()
+      && Number.isInteger(checklist.page)
+      && checklist.page > 0;
 
     findings.push(makeFinding({
       finding_id: `${rule.rule_id}-${rule.document}`,
@@ -32,14 +32,23 @@ export function checkRequirements(uploadedDocs, requirements) {
       severity: "high",
       rule_id: rule.rule_id,
       field: rule.document,
-      message: checklist.checked
+      message: !hasChecklistEvidence
+        ? `${rule.label} is required but was not uploaded. No application-form checklist was available to confirm whether it was marked as attached.`
+        : checklist.checked
         ? `${rule.label} is required but was not uploaded. The application form's requirements checklist marks it as attached.`
         : `${rule.label} is required but was not uploaded. The application form's requirements checklist does not mark it as attached.`,
-      evidence: [{
-        document: "application_form",
-        page: checklist.page,
-        source_text: checklist.source_text,
-      }],
+      evidence: hasChecklistEvidence
+        ? [{
+          document: "application_form",
+          page: checklist.page,
+          source_text: checklist.source_text,
+        }]
+        : [{
+          document: rule.document,
+          page: 1,
+          source_text: null,
+          note: `${rule.label} was not uploaded; no source page is available.`,
+        }],
     }));
   }
 
@@ -51,14 +60,20 @@ export function checkRequiredFields(fields, requirements) {
 
   for (const rule of requirements.required_fields) {
     const field = fields.find((item) => item.document === rule.document && item.field === rule.field);
+    const documentFields = fields.filter((item) => item.document === rule.document);
     if (!field) {
-      if (!fields.some((item) => item.document === rule.document)) continue;
-      throw new Error(`Required extraction ${rule.document}.${rule.field} is absent; the rules engine cannot assess it.`);
+      if (documentFields.length === 0) continue;
     }
-    if (!blank(field.value)) continue;
-    if (!field.source_text?.trim() || !Number.isInteger(field.page) || field.page < 1) {
-      throw new Error(`Missing ${rule.document}.${rule.field}: source page and printed source_text are required as evidence.`);
-    }
+    if (field && !blank(field.value)) continue;
+    const page = field?.page ?? documentFields[0]?.page ?? 1;
+    const sourceText = field?.source_text?.trim() ? field.source_text : null;
+    const presence = field?.presence
+      ?? (field?.value != null ? "printed" : sourceText ? "blank_printed" : "not_found");
+    const note = sourceText
+      ? undefined
+      : presence === "blank_printed"
+        ? `The ${rule.field.replaceAll("_", " ")} field is printed as blank in the ${rule.document.replaceAll("_", " ")}.`
+        : `No ${rule.field.replaceAll("_", " ")} was found in the ${rule.document.replaceAll("_", " ")}.`;
 
     findings.push(makeFinding({
       finding_id: `${rule.rule_id}-${rule.document}-${rule.field}`,
@@ -68,9 +83,10 @@ export function checkRequiredFields(fields, requirements) {
       field: rule.field,
       message: `${rule.description} The field is blank or missing.`,
       evidence: [{
-        document: field.document,
-        page: field.page,
-        source_text: field.source_text,
+        document: rule.document,
+        page,
+        source_text: sourceText,
+        ...(note ? { note } : {}),
       }],
     }));
   }
