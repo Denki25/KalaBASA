@@ -12,8 +12,10 @@
     "test:extraction": "node backend/src/extraction/test.js",
     "test:ocr": "node backend/src/extraction/ocr-test.js",
     "test:rules": "node backend/src/rules/test.js",
+    "test:api": "node --test backend/src/api/test.js",
     "test:contract": "node contract/test.js ./samples",
     "seed:sample-cache": "node backend/src/extraction/seed-sample-cache.js",
+    "start:api": "node backend/src/api/server.js",
     "extract": "node backend/src/extraction/run.js"
   }
 }
