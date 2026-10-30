@@ -11,6 +11,7 @@
   "scripts": {
     "test:extraction": "node backend/src/extraction/test.js",
     "test:ocr": "node backend/src/extraction/ocr-test.js",
+    "test:rules": "node backend/src/rules/test.js",
     "test:contract": "node contract/test.js ./samples",
     "seed:sample-cache": "node backend/src/extraction/seed-sample-cache.js",
     "extract": "node backend/src/extraction/run.js"
