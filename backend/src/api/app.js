@@ -13,7 +13,15 @@ import {
 import { extractDocumentCached } from "../extraction/cache.js";
 import { readPdfPages } from "../extraction/pdf.js";
 import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "../rules/index.js";
-import { ApiError, CreateApplicationResponse, FindingUpdate, Requirements } from "./schemas.js";
+import {
+  ActivityResponse,
+  ApiError,
+  ApplicationsResponse,
+  CreateApplicationResponse,
+  FindingUpdate,
+  Requirements,
+  Stats,
+} from "./schemas.js";
 import { createStore } from "./store.js";
 import { readApplicationChecklist } from "./checklist.js";
 
@@ -51,12 +59,46 @@ function audit(store, application, action, details = {}) {
   });
 }
 
-function uploadedDocuments(application) {
+function fixtureAudit(applications, auditEntries) {
+  const entries = [...auditEntries];
+  const auditedIds = new Set(auditEntries.map((entry) => entry.application_id));
+  for (const application of applications) {
+    if (auditedIds.has(application.id)) continue;
+    const timestamp = application.created_at;
+    entries.push({ application_id: application.id, action: "application_created", details: {}, timestamp });
+    if (!["uploaded", "extracting"].includes(application.status)) {
+      entries.push({ application_id: application.id, action: "application_processed", details: {}, timestamp });
+    }
+    if (application.status === "approved" || application.status === "returned") {
+      entries.push({
+        application_id: application.id,
+        action: application.status === "approved" ? "application_approved" : "application_returned",
+        details: {},
+        timestamp,
+      });
+    }
+  }
+  return entries;
+}
+
+function activityText(entry) {
+  switch (entry.action) {
+    case "application_created": return "New application received";
+    case "extraction_completed": return Number(entry.details?.findings) > 0 ? "Inconsistency flagged" : "Application processed";
+    case "application_processed": return "Application processed";
+    case "finding_updated": return "Finding reviewed";
+    case "application_approved": return "Application approved";
+    case "application_returned": return "Application returned for correction";
+    default: return null;
+  }
+}
+
+function uploadedDocuments(application, readPdf = readPdfPages) {
   const docs = application.documents.map((item) => item.document);
   const form = application.documents.find((item) => item.document === "application_form");
   if (!form) return docs;
   const filename = path.join(uploadRoot, application.id, `${form.document}.pdf`);
-  return readPdfPages(filename).then(({ pages }) => [
+  return readPdf(filename).then(({ pages }) => [
     { document: form.document, checklist: readApplicationChecklist(pages) },
     ...docs.filter((document) => document !== form.document),
   ]);
@@ -65,14 +107,67 @@ function uploadedDocuments(application) {
 export function createApp({
   store = createStore(fixtureApplications),
   mockMode = process.env.MOCK_MODE === "true",
+  readPdf = readPdfPages,
+  extractDocument = extractDocumentCached,
 } = {}) {
   const app = express();
-  const upload = multer({ storage: multer.memoryStorage() });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/api/lgus/:id/requirements", (request, response) => {
     if (request.params.id !== requirements.lgu.id) return sendError(response, 404, "LGU not found.");
     return sendParsed(response, Requirements, requirements);
+  });
+
+  app.get("/api/applications", async (request, response, next) => {
+    try {
+      return sendParsed(response, ApplicationsResponse, await store.list());
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/activity", async (request, response, next) => {
+    try {
+      const requestedLimit = Number(request.query.limit ?? 10);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(0, Math.floor(requestedLimit))) : 10;
+      let entries = await store.recentAudit(5000);
+      if (mockMode) entries = fixtureAudit(await store.list(), entries);
+      const activity = entries
+        .map((entry) => ({
+          application_id: entry.application_id,
+          action: entry.action,
+          text: activityText(entry),
+          timestamp: entry.timestamp,
+        }))
+        .filter((entry) => entry.text)
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+        .slice(0, limit);
+      return sendParsed(response, ActivityResponse, activity);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/stats", async (request, response, next) => {
+    try {
+      const applications = await store.list();
+      let entries = await store.recentAudit(5000);
+      if (mockMode) entries = fixtureAudit(applications, entries);
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const processedToday = entries.filter((entry) =>
+        ["application_approved", "application_returned"].includes(entry.action)
+        && new Date(entry.timestamp) >= startOfToday
+        && new Date(entry.timestamp) <= new Date()).length;
+      return sendParsed(response, Stats, {
+        pending: applications.filter((application) => application.status === "ready_for_review").length,
+        processed_today: processedToday,
+        flagged: applications.filter((application) => application.status === "ready_for_review" && application.open_findings > 0).length,
+      });
+    } catch (error) {
+      return next(error);
+    }
   });
 
   app.post("/api/applications", upload.array("files"), async (request, response, next) => {
@@ -148,17 +243,16 @@ export function createApp({
       application.status = "extracting";
       await store.save(application);
       await audit(store, application, "extraction_started");
-      const allFields = [];
-      for (const document of application.documents) {
+      const fieldGroups = await Promise.all(application.documents.map(async (document) => {
         const filePath = path.join(uploadRoot, application.id, `${document.document}.pdf`);
-        const { pages, method } = await readPdfPages(filePath);
-        const fields = await extractDocumentCached({ document: document.document, pages, method });
+        const { pages, method } = await readPdf(filePath);
         document.pages = pages.length;
         document.method = method;
-        allFields.push(...fields);
-      }
+        return extractDocument({ document: document.document, pages, method });
+      }));
+      const allFields = fieldGroups.flat();
       application.fields = allFields;
-      const uploaded = await uploadedDocuments(application);
+      const uploaded = await uploadedDocuments(application, readPdf);
       application.findings = [
         ...checkRequirements(uploaded, requirements),
         ...checkRequiredFields(allFields, requirements),
@@ -174,7 +268,8 @@ export function createApp({
         await store.save(application);
         await audit(store, application, "extraction_failed");
       }
-      return next(error);
+      if (error instanceof Error && error.name === "ZodError") return sendError(response, 400, error.message);
+      return sendError(response, 500, error.message || "The application could not be processed.");
     }
   });
 
@@ -192,7 +287,13 @@ export function createApp({
     try {
       const application = await store.get(request.params.id);
       if (!application) return sendError(response, 404, "Application not found.");
+      if (["approved", "returned"].includes(application.status)) {
+        return sendError(response, 409, "This application already has a final decision.");
+      }
       const input = FindingUpdate.parse(request.body);
+      if (["dismissed", "escalated"].includes(input.status) && !input.reviewer_note?.trim()) {
+        return sendError(response, 400, "A reviewer note is required to dismiss or escalate a finding.");
+      }
       const index = application.findings.findIndex((item) => item.finding_id === request.params.findingId);
       if (index < 0) return sendError(response, 404, "Finding not found.");
       const updated = Finding.parse({
@@ -220,6 +321,9 @@ export function createApp({
       try {
         const application = await store.get(request.params.id);
         if (!application) return sendError(response, 404, "Application not found.");
+        if (["approved", "returned"].includes(application.status)) {
+          return sendError(response, 409, "This application already has a final decision.");
+        }
         if (nextOutcome(application) !== outcome) {
           return sendError(response, 409, `Application cannot be ${outcome === "approve" ? "approved" : "returned"} in its current finding state.`);
         }
@@ -236,6 +340,9 @@ export function createApp({
   app.use((request, response) => sendError(response, 404, "API route not found."));
   app.use((error, request, response, next) => {
     if (response.headersSent) return next(error);
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+      return sendError(response, 400, "Each PDF must be 20 MB or smaller.");
+    }
     console.error(error);
     return sendError(response, 500, "The request could not be completed.");
   });

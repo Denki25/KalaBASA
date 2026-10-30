@@ -20,6 +20,24 @@ export class MemoryStore {
     return application ? structuredClone(application) : null;
   }
 
+  async list() {
+    return [...this.applications.values()].map((application) => ({
+      id: application.id,
+      label: application.label,
+      status: application.status,
+      created_at: application.created_at,
+      open_findings: application.findings.filter((finding) => finding.status === "open" || finding.status === "escalated").length,
+      total_findings: application.findings.length,
+    })).sort((left, right) => right.created_at.localeCompare(left.created_at));
+  }
+
+  async recentAudit(limit = 10) {
+    const safeLimit = Math.max(0, Math.floor(Number(limit) || 0));
+    return structuredClone(this.auditLog)
+      .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+      .slice(0, safeLimit);
+  }
+
   async save(application) {
     const parsed = Application.parse(application);
     this.applications.set(parsed.id, structuredClone(parsed));
@@ -56,6 +74,37 @@ export class SupabaseStore extends MemoryStore {
     });
     await super.save(app);
     return app;
+  }
+
+  async list() {
+    const rows = assertSupabase(await this.client.from("applications").select("id,label,status,created_at"));
+    const findings = assertSupabase(await this.client.from("findings").select("application_id,status"));
+    const counts = new Map();
+    for (const finding of findings) {
+      const count = counts.get(finding.application_id) ?? { open_findings: 0, total_findings: 0 };
+      count.total_findings += 1;
+      if (finding.status === "open" || finding.status === "escalated") count.open_findings += 1;
+      counts.set(finding.application_id, count);
+    }
+    return rows.map((row) => ({
+      ...row,
+      open_findings: counts.get(row.id)?.open_findings ?? 0,
+      total_findings: counts.get(row.id)?.total_findings ?? 0,
+    })).sort((left, right) => right.created_at.localeCompare(left.created_at));
+  }
+
+  async recentAudit(limit = 10) {
+    const safeLimit = Math.max(0, Math.floor(Number(limit) || 0));
+    const rows = assertSupabase(await this.client.from("audit_log")
+      .select("application_id,action,details,created_at")
+      .order("created_at", { ascending: false })
+      .limit(safeLimit));
+    return rows.map((row) => ({
+      application_id: row.application_id,
+      action: row.action,
+      details: row.details ?? {},
+      timestamp: row.created_at,
+    }));
   }
 
   async save(application) {

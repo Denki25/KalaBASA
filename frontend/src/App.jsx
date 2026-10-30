@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import logo from "../../design/splash/KalaBASA (4).png";
 
 const MOCK_MODE = import.meta.env.MOCK_MODE === true;
 const DEFAULT_FIXTURE = "set_05_demo_story";
@@ -16,6 +17,7 @@ const DOCUMENTS = [
   ["lease_contract", "Contract of Lease"],
   ["community_tax_certificate", "Community Tax Certificate"],
 ];
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const SCREENS = ["Upload", "Requirements", "Extracted Fields", "Findings", "Outcome"];
 
 function outcomeFor(application) {
@@ -36,16 +38,204 @@ function textWithHighlight(text, target) {
   </>;
 }
 
+function highlightWordDifferences(text, peerTexts) {
+  if (!text || peerTexts.length === 0) return text;
+  const tokenize = (value) => new Set((value.match(/[\p{L}\p{N}'-]+/gu) ?? []).map((word) => word.toLocaleLowerCase()));
+  const peerWords = peerTexts.map(tokenize);
+  const pieces = text.split(/([\p{L}\p{N}'-]+)/gu);
+  return pieces.map((piece, index) => {
+    if (!/[\p{L}\p{N}]/u.test(piece)) return piece;
+    const normalized = piece.toLocaleLowerCase();
+    return peerWords.some((words) => !words.has(normalized))
+      ? <mark className="word-difference" key={`${index}-${piece}`}>{piece}</mark>
+      : piece;
+  });
+}
+
+function formattedDecisionTime(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function greetingForNow() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning, Reviewer!";
+  if (hour < 18) return "Good afternoon, Reviewer!";
+  return "Good evening, Reviewer!";
+}
+
+function timeAgo(timestamp) {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 60000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function BottomNavigation({ active, onHome, onApplications, onScan }) {
+  return (
+    <nav className="bottom-navigation" aria-label="Main navigation">
+      <button className={active === "Home" ? "active" : ""} type="button" onClick={onHome} aria-current={active === "Home" ? "page" : undefined}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3.5 10 8.5-7 8.5 7v10a.8.8 0 0 1-.8.8h-5.4v-6.3h-4.6v6.3H4.3a.8.8 0 0 1-.8-.8z" /></svg>Home
+      </button>
+      <button className={active === "Applications" ? "active" : ""} type="button" onClick={onApplications} aria-current={active === "Applications" ? "page" : undefined}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7" /></svg>Applications
+      </button>
+      <button className="scan-nav-action" type="button" aria-label="Start AI-Assisted Review" onClick={onScan}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 12h8" /></svg>
+      </button>
+      <button type="button" disabled aria-label="Reports (not available)">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20h16M7 16V9m5 7V4m5 12v-5" /></svg>Reports
+      </button>
+      <button type="button" disabled aria-label="Profile (not available)">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>Profile
+      </button>
+    </nav>
+  );
+}
+
+function HomeScreen({ onUpload, onOpenApplication }) {
+  const [applications, setApplications] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [stats, setStats] = useState({ pending: 0, processed_today: 0, flagged: 0 });
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      fetch("/api/applications").then((response) => {
+        if (!response.ok) throw new Error("Could not load applications.");
+        return response.json();
+      }),
+      fetch("/api/activity?limit=10").then((response) => {
+        if (!response.ok) throw new Error("Could not load recent activity.");
+        return response.json();
+      }),
+      fetch("/api/stats").then((response) => {
+        if (!response.ok) throw new Error("Could not load dashboard stats.");
+        return response.json();
+      }),
+    ]).then(([applicationData, activityData, statsData]) => {
+      if (!active) return;
+      setApplications(applicationData);
+      setActivity(activityData);
+      setStats(statsData);
+      setLoadError("");
+    }).catch(() => {
+      if (active) setLoadError("Could not load Home data. Please refresh to try again.");
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
+
+  const filteredApplications = applications.filter((application) =>
+    `${application.id} ${application.label}`.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return (
+    <main className="home-screen">
+      <header className="home-header">
+        <img className="home-logo" src={logo} alt="KalaBASA" />
+        {MOCK_MODE && <span className="home-demo-badge"><i />Demo mode / mocked data</span>}
+      </header>
+
+      <section className="home-welcome">
+        <span className="home-eyebrow">PERMIT REVIEW WORKSPACE</span>
+        <h1>{greetingForNow()}</h1>
+        <p>Let’s make the permit process faster and more accurate.</p>
+      </section>
+
+      <label className="home-search">
+        <span className="search-icon" aria-hidden="true">⌕</span>
+        <span className="visually-hidden">Search applications by ID or label</span>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search applications..." />
+        <span className="search-hint" aria-hidden="true">⌕</span>
+      </label>
+
+      <section className="home-stats" aria-label="Application statistics">
+        <article className="home-stat pending-stat"><span className="stat-icon">▤</span><strong>{stats.pending}</strong><span>Pending</span></article>
+        <article className="home-stat processed-stat"><span className="stat-icon">✓</span><strong>{stats.processed_today}</strong><span>Processed<br />Today</span></article>
+        <article className="home-stat flagged-stat"><span className="stat-icon">!</span><strong>{stats.flagged}</strong><span>Flagged</span></article>
+      </section>
+
+      <button className="home-upload-card" type="button" onClick={onUpload}>
+        <span className="upload-art" aria-hidden="true"><span>↑</span><i>AI</i></span>
+        <span className="upload-copy"><strong>Let KalaBASA do the check</strong><small>Upload an application to get started.</small><small>AI-assisted review.</small></span>
+        <span className="upload-arrow" aria-hidden="true">→</span>
+      </button>
+
+      {loadError && <p className="home-load-error" role="alert">{loadError}</p>}
+
+      <section className="home-activity" aria-labelledby="recent-activity-heading">
+        <div className="home-section-heading"><h2 id="recent-activity-heading">Recent Activity</h2></div>
+        {loading ? <p className="home-empty">Loading activity...</p> : activity.length === 0 ? (
+          <p className="home-empty">No activity yet</p>
+        ) : (
+          <ol className="activity-list">
+            {activity.map((item, index) => (
+              <li className="activity-item" key={`${item.application_id}-${item.action}-${item.timestamp}-${index}`}>
+                <span className={`activity-dot activity-${item.action}`} aria-hidden="true">{item.action === "application_approved" ? "✓" : item.action === "application_returned" ? "↩" : item.action === "finding_updated" || item.text === "Inconsistency flagged" ? "!" : "↑"}</span>
+                <span className="activity-copy"><strong>{item.text}</strong><small>{applications.find((application) => application.id === item.application_id)?.label ?? item.application_id}</small></span>
+                <time dateTime={item.timestamp}>{timeAgo(item.timestamp)}</time>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <section className="home-applications" aria-labelledby="applications-heading">
+        <div className="home-section-heading"><h2 id="applications-heading">Applications</h2><span>{filteredApplications.length}</span></div>
+        {loading ? <p className="home-empty">Loading applications...</p> : filteredApplications.length === 0 ? (
+          <p className="home-empty">No applications match your search.</p>
+        ) : (
+          <ul className="application-list">
+            {filteredApplications.map((item) => (
+              <li key={item.id}>
+                <button type="button" onClick={() => onOpenApplication(item.id)}>
+                  <span className="application-file-icon" aria-hidden="true">▤</span>
+                  <span className="application-row-copy"><strong>{item.label}</strong><small>{item.id}</small></span>
+                  <span className={`application-status status-${item.status}`}>{item.status.replaceAll("_", " ")}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <BottomNavigation active="Home" onHome={() => {}} onApplications={onUpload} onScan={onUpload} />
+    </main>
+  );
+}
+
 function App() {
   const [application, setApplication] = useState(null);
   const [requirements, setRequirements] = useState(null);
-  const [screen, setScreen] = useState("Upload");
+  const [screen, setScreen] = useState("Home");
   const [selectedFindingId, setSelectedFindingId] = useState(null);
   const [fixture, setFixture] = useState(DEFAULT_FIXTURE);
   const [files, setFiles] = useState({});
+  const [referenceLabel, setReferenceLabel] = useState("");
+  const [fileError, setFileError] = useState("");
+  const [pendingApplications, setPendingApplications] = useState([]);
+  const [checkApplicationId, setCheckApplicationId] = useState(null);
+  const [aiCheckError, setAiCheckError] = useState("");
+  const [checkStartedAt, setCheckStartedAt] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [draggingDocument, setDraggingDocument] = useState(null);
   const [reviewerNote, setReviewerNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [splashStatus, setSplashStatus] = useState("loading");
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [demoSignedIn, setDemoSignedIn] = useState(() => sessionStorage.getItem("kalabasa-demo-signed-in") === "true");
+  const [showPassword, setShowPassword] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState(false);
+  const [showFindingDetailMobile, setShowFindingDetailMobile] = useState(false);
+  const [noteError, setNoteError] = useState("");
+  const [decisionTimestamp, setDecisionTimestamp] = useState(null);
 
   const selectedFinding = useMemo(
     () => application?.findings.find((finding) => finding.finding_id === selectedFindingId) ?? application?.findings[0] ?? null,
@@ -55,43 +245,110 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/lgus/bagong-dalisay-demo/requirements")
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    setSplashStatus("loading");
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      if (active) setSplashStatus("error");
+    }, 8000);
+
+    async function checkServer() {
+      try {
+        const response = await fetch("/api/lgus/bagong-dalisay-demo/requirements", { signal: controller.signal });
+        if (!response.ok) throw new Error("Requirements check failed.");
+        const data = await response.json();
+        const remaining = Math.max(0, 1500 - (Date.now() - startedAt));
+        await new Promise((resolve) => window.setTimeout(resolve, remaining));
+        if (active && !timedOut) {
+          setRequirements(data);
+          setSplashStatus("ready");
+        }
+      } catch {
+        if (active && !timedOut) setSplashStatus("error");
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    checkServer();
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [retryAttempt]);
+
+  useEffect(() => {
+    if (!MOCK_MODE) return undefined;
+    let active = true;
+    fetch(`/api/applications/app-${DEFAULT_FIXTURE}`)
       .then(async (response) => {
-        if (!response.ok) throw new Error((await response.json()).error ?? "Could not load requirements.");
+        if (!response.ok) throw new Error((await response.json()).error ?? "Could not load demo application.");
         return response.json();
       })
       .then((data) => {
-        if (active) setRequirements(data);
+        if (active) {
+          setApplication(data);
+          setSelectedFindingId(data.findings[0]?.finding_id ?? null);
+        }
       })
       .catch((cause) => {
         if (active) setError(cause.message);
       });
-
-    if (MOCK_MODE) {
-      fetch(`/api/applications/app-${DEFAULT_FIXTURE}`)
-        .then(async (response) => {
-          if (!response.ok) throw new Error((await response.json()).error ?? "Could not load demo application.");
-          return response.json();
-        })
-        .then((data) => {
-          if (active) {
-            setApplication(data);
-            setSelectedFindingId(data.findings[0]?.finding_id ?? null);
-          }
-        })
-        .catch((cause) => {
-          if (active) setError(cause.message);
-        });
-    }
-
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
+    if (screen !== "Upload") return undefined;
+    let active = true;
+    fetch("/api/applications")
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load pending applications.");
+        return response.json();
+      })
+      .then((items) => {
+        if (active) setPendingApplications(items.filter((item) => item.status === "ready_for_review"));
+      })
+      .catch(() => {
+        if (active) setPendingApplications([]);
+      });
+    return () => { active = false; };
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen !== "AI Check" || !checkStartedAt || !busy) return undefined;
+    const updateElapsed = () => setElapsedSeconds(Math.floor((Date.now() - checkStartedAt) / 1000));
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(interval);
+  }, [screen, checkStartedAt, busy]);
+
+  useEffect(() => {
     setReviewerNote(selectedFinding?.reviewer_note ?? "");
-  }, [selectedFinding?.finding_id]);
+    setNoteError("");
+  }, [application?.id, selectedFinding?.finding_id]);
+
+  useEffect(() => {
+    if (!application || !["approved", "returned"].includes(application.status)) {
+      setDecisionTimestamp(null);
+      return undefined;
+    }
+    let active = true;
+    const action = application.status === "approved" ? "application_approved" : "application_returned";
+    fetch("/api/activity?limit=100")
+      .then((response) => response.ok ? response.json() : [])
+      .then((items) => {
+        if (!active) return;
+        const entry = items.find((item) => item.application_id === application.id && item.action === action);
+        setDecisionTimestamp(entry?.timestamp ?? application.updated_at ?? null);
+      })
+      .catch(() => { if (active) setDecisionTimestamp(application.updated_at ?? null); });
+    return () => { active = false; };
+  }, [application?.id, application?.status]);
 
   async function request(url, options = {}) {
     const response = await fetch(url, options);
@@ -104,13 +361,39 @@ function App() {
     const processed = await request(`/api/applications/${id}/process`, { method: "POST" });
     setApplication(processed);
     setSelectedFindingId(processed.findings[0]?.finding_id ?? null);
-    setScreen("Requirements");
+    setScreen("Findings");
+  }
+
+  function acceptFile(document, file) {
+    setFileError("");
+    if (!file) return;
+    const isPdf = file.name.toLowerCase().endsWith(".pdf") && (!file.type || file.type === "application/pdf");
+    if (!isPdf) {
+      setFileError("Please choose a PDF file for each document slot.");
+      return;
+    }
+    if (file.size > MAX_PDF_BYTES) {
+      setFileError("Each PDF must be 20 MB or smaller.");
+      return;
+    }
+    setFiles((current) => ({ ...current, [document]: file }));
+  }
+
+  function removeFile(document) {
+    setFiles((current) => ({ ...current, [document]: null }));
+    setFileError("");
   }
 
   async function submitApplication(event) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setAiCheckError("");
+    setCheckApplicationId(null);
+    setCheckStartedAt(Date.now());
+    setElapsedSeconds(0);
+    setScreen("AI Check");
+    let createdId = null;
     try {
       let created;
       if (MOCK_MODE) {
@@ -122,17 +405,39 @@ function App() {
       } else {
         const formData = new FormData();
         formData.set("lgu_id", "bagong-dalisay-demo");
-        formData.set("label", "Business Permit Application");
-        for (const [document, file] of Object.entries(files)) {
+        formData.set("label", referenceLabel.trim() || "Business Permit Application");
+        for (const [document] of DOCUMENTS) {
+          const file = files[document];
           if (!file) continue;
           formData.append("document_types[]", document);
           formData.append("files", file);
         }
         created = await request("/api/applications", { method: "POST", body: formData });
       }
+      createdId = created.id;
+      setCheckApplicationId(created.id);
       await processApplication(created.id);
     } catch (cause) {
-      setError(cause.message);
+      if (createdId) setAiCheckError(cause.message);
+      else {
+        setScreen("Upload");
+        setFileError(cause.message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryProcessing() {
+    if (!checkApplicationId) return;
+    setAiCheckError("");
+    setBusy(true);
+    setCheckStartedAt(Date.now());
+    setElapsedSeconds(0);
+    try {
+      await processApplication(checkApplicationId);
+    } catch (cause) {
+      setAiCheckError(cause.message);
     } finally {
       setBusy(false);
     }
@@ -140,6 +445,11 @@ function App() {
 
   async function updateFinding(status) {
     if (!application || !selectedFinding) return;
+    if (["dismissed", "escalated"].includes(status) && !reviewerNote.trim()) {
+      setNoteError("Add a reviewer note before dismissing or escalating this finding.");
+      return;
+    }
+    setNoteError("");
     setBusy(true);
     setError("");
     try {
@@ -161,11 +471,30 @@ function App() {
 
   async function decide(outcome) {
     if (!application) return;
+    const action = outcome === "approve" ? "Approve" : "Return";
+    if (!window.confirm(`${action} this application? This cannot be undone.`)) return;
     setBusy(true);
     setError("");
     try {
       const updated = await request(`/api/applications/${application.id}/${outcome}`, { method: "POST" });
       setApplication(updated);
+      setDecisionTimestamp(new Date().toISOString());
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openApplication(id) {
+    setBusy(true);
+    setError("");
+    try {
+      const selected = await request(`/api/applications/${id}`);
+      setApplication(selected);
+      setSelectedFindingId(selected.findings[0]?.finding_id ?? null);
+      setShowFindingDetailMobile(false);
+      setScreen("Findings");
     } catch (cause) {
       setError(cause.message);
     } finally {
@@ -174,22 +503,140 @@ function App() {
   }
 
   const uploaded = new Set(application?.documents.map((document) => document.document) ?? []);
+  const flowScreen = ["Upload", "AI Check"].includes(screen);
+  const reviewScreen = ["Findings", "Extracted Fields", "Requirements", "Outcome"].includes(screen);
+  const finalDecision = ["approved", "returned"].includes(application?.status);
+  const requiredDocuments = requirements?.required_documents ?? [];
+  const submittedRequiredCount = requiredDocuments.filter((item) => uploaded.has(item.document)).length;
+  const requiredCompletion = requiredDocuments.length ? Math.round((submittedRequiredCount / requiredDocuments.length) * 100) : 0;
+
+  function signInForDemo() {
+    sessionStorage.setItem("kalabasa-demo-signed-in", "true");
+    setDemoSignedIn(true);
+  }
+
+  if (splashStatus !== "ready") {
+    return (
+      <main className="splash-screen" aria-live="polite">
+        <svg className="splash-wave splash-wave-top" viewBox="0 0 430 190" preserveAspectRatio="none" aria-hidden="true">
+          <path className="wave-navy" d="M0 0h430v62C333 105 248 87 174 111 97 137 49 174 0 190Z" />
+          <path className="wave-orange" d="M0 161C87 105 138 104 206 89c73-16 145-9 224-43v9c-76 33-148 26-222 42C139 113 86 114 0 173Z" />
+        </svg>
+        <svg className="splash-wave splash-wave-bottom" viewBox="0 0 430 150" preserveAspectRatio="none" aria-hidden="true">
+          <path className="wave-orange" d="M0 98c90 28 155 17 220-1 74-20 127-28 210-68v121H0Z" />
+          <path className="wave-navy" d="M0 117c90 24 154 13 222-4 76-19 128-29 208-65v102H0Z" />
+        </svg>
+        <section className="splash-content">
+          <img className="splash-logo" src={logo} alt="KalaBASA" />
+          <p className="splash-tagline">Smarter Review. Faster Service.</p>
+          {splashStatus === "loading" ? (
+            <>
+              <span className="splash-spinner" role="status" aria-label="Loading" />
+              <p className="splash-status">Initializing KalaBASA...</p>
+            </>
+          ) : (
+            <div className="splash-error" role="alert">
+              <p>Can't reach the server</p>
+              <button type="button" onClick={() => setRetryAttempt((attempt) => attempt + 1)}>Retry</button>
+            </div>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  if (!demoSignedIn) {
+    return (
+      <main className="login-screen">
+        <div className="login-decoration login-decoration-top" aria-hidden="true" />
+        <div className="login-decoration login-decoration-bottom" aria-hidden="true" />
+        <section className="login-content" aria-labelledby="login-heading">
+          <header className="login-brand">
+            <img src={logo} alt="KalaBASA" />
+            <p>Smarter Review. Faster Service.</p>
+          </header>
+
+          <div className="login-intro">
+            <h1 id="login-heading">Welcome Back, Reviewer!</h1>
+            <p>Sign in to continue reviewing business permit applications.</p>
+          </div>
+
+          <form className="login-form" noValidate onSubmit={(event) => { event.preventDefault(); signInForDemo(); }}>
+            <label className="login-field">
+              <span>Email</span>
+              <input type="email" name="email" autoComplete="email" />
+            </label>
+            <label className="login-field">
+              <span>Password</span>
+              <span className="login-password-input">
+                <input type={showPassword ? "text" : "password"} name="password" autoComplete="current-password" />
+                <button className="password-toggle" type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((visible) => !visible)}>
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </span>
+            </label>
+            <div className="login-options">
+              <label className="remember-option"><input type="checkbox" name="remember" /> <span>Remember me</span></label>
+              <a href="#forgot-password" onClick={(event) => { event.preventDefault(); setForgotMessage(true); }}>Forgot password?</a>
+            </div>
+            {forgotMessage && <p className="forgot-message" role="status">Not available in the demo.</p>}
+            <button className="login-submit" type="submit">Sign In</button>
+          </form>
+
+          <div className="login-divider"><span>or</span></div>
+          <button className="login-lgu" type="button" onClick={signInForDemo}>Sign in with LGU Account</button>
+          <p className="login-help">Need help? Contact your system administrator.</p>
+          <p className="demo-login-note">Demo - no real login</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (screen === "Home") {
+    return <HomeScreen onUpload={() => setScreen("Upload")} onOpenApplication={openApplication} />;
+  }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#" onClick={() => setScreen("Upload")} aria-label="KalaBASA home">
-          <span className="brand-mark">K</span>
-          <span><strong>KalaBASA</strong><small>Permit review workspace</small></span>
-        </a>
-        <div className="topbar-right">
+    <div className={`app-shell ${flowScreen ? "review-flow-shell" : ""} ${reviewScreen ? "review-screen-shell" : ""}`}>
+      {flowScreen ? (
+        <header className="flow-header">
+          <div className="flow-header-art" aria-hidden="true" />
+          <button className="flow-back" type="button" aria-label="Back to Home" onClick={() => setScreen("Home")}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6M9 12h11" /></svg>
+          </button>
+          <div className="flow-header-title">AI-Assisted <span>Review</span></div>
+          <button className="flow-notifications" type="button" aria-label="Notifications" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+            <i />
+          </button>
+        </header>
+      ) : reviewScreen ? (
+        <header className="review-header">
+          <button className="review-back" type="button" onClick={() => setScreen("Home")} aria-label="Back to Home">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+          <div className="review-header-copy">
+            <strong>{application?.label || application?.id || "Application review"}</strong>
+            {application?.label && <small>{application.id}</small>}
+          </div>
+          <span className={`review-header-status ${finalDecision ? "final" : ""}`}>{application?.status?.replaceAll("_", " ") ?? "No application"}</span>
           {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
-          <span className="reviewer-label">Reviewer workspace</span>
-        </div>
-      </header>
+        </header>
+      ) : (
+        <header className="topbar">
+          <a className="brand" href="#" onClick={() => setScreen("Upload")} aria-label="KalaBASA home">
+            <span className="brand-mark">K</span>
+            <span><strong>KalaBASA</strong><small>Permit review workspace</small></span>
+          </a>
+          <div className="topbar-right">
+            {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
+            <span className="reviewer-label">Reviewer workspace</span>
+          </div>
+        </header>
+      )}
 
-      <div className="workspace">
-        <aside className="sidebar">
+      <div className={`workspace ${flowScreen ? "flow-workspace" : ""} ${reviewScreen ? "review-workspace" : ""}`}>
+        {!flowScreen && !reviewScreen && <aside className="sidebar">
           <div className="sidebar-label">APPLICATION REVIEW</div>
           <nav aria-label="Review sections">
             {SCREENS.map((item, index) => (
@@ -210,63 +657,132 @@ function App() {
             <span className={`status-dot ${application ? "ready" : ""}`} />
             {application ? application.status.replaceAll("_", " ") : "No application loaded"}
           </div>
-        </aside>
+        </aside>}
 
-        <main className="main-content">
-          <div className="page-heading">
+        <main className={`main-content ${flowScreen ? "flow-main" : ""} ${reviewScreen ? "review-main" : ""}`}>
+          {(flowScreen || reviewScreen) && (
+            <nav className="review-stepper" aria-label="AI-assisted review steps">
+              {["Upload", "AI Check", "Review"].map((step, index) => {
+                const activeIndex = screen === "Upload" ? 0 : screen === "AI Check" || screen === "Requirements" || screen === "Extracted Fields" ? 1 : 2;
+                return <span className={`review-step ${index === activeIndex ? "active" : index < activeIndex ? "complete" : ""}`} key={step}>
+                  <i>{index < activeIndex ? "✓" : index + 1}</i>{step}
+                </span>;
+              })}
+            </nav>
+          )}
+          {reviewScreen && <nav className="review-tabs" aria-label="Application review sections">
+            {[ ["Findings", "Findings"], ["Extracted Fields", "Extracted Fields"], ["Requirements", "Requirements"], ["Outcome", "Decision"] ].map(([value, label]) => (
+              <button type="button" key={value} className={screen === value ? "active" : ""} aria-current={screen === value ? "page" : undefined} onClick={() => setScreen(value)}>{label}</button>
+            ))}
+          </nav>}
+          {!flowScreen && !reviewScreen && <div className="page-heading">
             <div>
               <div className="eyebrow">{requirements?.lgu.name ?? "City Business Permits Office"}</div>
               <h1>{screen}</h1>
               <p>{application?.label ?? "Review supporting documents and extracted information."}</p>
             </div>
             {application && <div className="application-id">APPLICATION <strong>{application.id}</strong></div>}
-          </div>
+          </div>}
+
+          {flowScreen && <p className="flow-intro">{screen === "Upload" ? "Upload or select an application to start the AI-powered document check." : screen === "AI Check" ? "Your application is being checked against its required documents." : application?.label}</p>}
+
+          {reviewScreen && finalDecision && <div className="final-decision-banner" role="status">
+            <span className="final-decision-check" aria-hidden="true">✓</span>
+            <span><strong>Decision recorded</strong><small>{formattedDecisionTime(decisionTimestamp) || "Final decision saved"} · {application.status}</small></span>
+          </div>}
 
           {error && <div className="error-banner" role="alert">{error}</div>}
 
           {screen === "Upload" && (
             <section className="card upload-card">
               <div className="card-heading">
-                <div><h2>{MOCK_MODE ? "Choose a demo application" : "Upload application documents"}</h2>
-                  <p>{MOCK_MODE ? "Select one sample set to load its review data." : "Select each PDF and the document type it contains."}</p></div>
-                <span className="step-pill">STEP 01</span>
+                <div><h2>Upload application documents</h2><p>Select the documents you have. You can continue with missing documents.</p></div>
               </div>
               <form onSubmit={submitApplication}>
+                {!MOCK_MODE && <label className="reference-field">Reference / label <span>Optional</span>
+                  <input value={referenceLabel} onChange={(event) => setReferenceLabel(event.target.value)} placeholder="BP-2026-0001" />
+                </label>}
                 {MOCK_MODE ? (
-                  <label className="field-label">Sample scenario
-                    <select value={fixture} onChange={(event) => setFixture(event.target.value)}>
-                      {FIXTURES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-                    </select>
-                  </label>
+                  <div className="demo-upload-notice">
+                    <strong>Demo mode: your files are not read. A sample application is loaded instead.</strong>
+                    <label className="field-label">Sample application
+                      <select value={fixture} onChange={(event) => setFixture(event.target.value)}>
+                        {FIXTURES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                      </select>
+                    </label>
+                  </div>
                 ) : (
-                  <div className="file-grid">
-                    {DOCUMENTS.map(([document, label]) => (
-                      <label className="file-row" key={document}>
-                        <span className="file-symbol">PDF</span>
-                        <span className="file-description"><strong>{label}</strong><small>{files[document]?.name ?? "Choose a PDF file"}</small></span>
-                        <input
-                          type="file"
-                          accept="application/pdf,.pdf"
-                          onChange={(event) => setFiles((current) => ({ ...current, [document]: event.target.files?.[0] ?? null }))}
-                        />
-                      </label>
-                    ))}
+                  <div className="document-slots">
+                    {DOCUMENTS.map(([document, label]) => {
+                      const file = files[document];
+                      const sizeLabel = file ? file.size >= 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB` : "PDF, up to 20 MB each";
+                      return <article
+                        className={`document-slot ${draggingDocument === document ? "dragging" : ""} ${file ? "has-file" : ""}`}
+                        key={document}
+                        onDragOver={(event) => { event.preventDefault(); setDraggingDocument(document); }}
+                        onDragLeave={() => setDraggingDocument(null)}
+                        onDrop={(event) => { event.preventDefault(); setDraggingDocument(null); acceptFile(document, event.dataTransfer.files?.[0]); }}
+                      >
+                        <span className="document-slot-icon" aria-hidden="true">PDF</span>
+                        <div className="document-slot-copy">
+                          <label htmlFor={`file-${document}`}>{label}</label>
+                          <small>{file ? `${file.name} · ${sizeLabel}` : sizeLabel}</small>
+                        </div>
+                        <label className="choose-pdf">
+                          Choose PDF
+                          <input className="document-file-input" id={`file-${document}`} type="file" accept="application/pdf,.pdf" onChange={(event) => { acceptFile(document, event.target.files?.[0]); event.target.value = ""; }} />
+                        </label>
+                        {file && <button className="remove-file" type="button" onClick={() => removeFile(document)}>Remove</button>}
+                      </article>;
+                    })}
                   </div>
                 )}
+                {fileError && <p className="upload-file-error" role="alert">{fileError}</p>}
                 <div className="form-actions">
-                  <p>{MOCK_MODE ? "Mock mode loads fixture fields and findings; no files or LLM calls are used." : "Uploaded PDFs are processed for text and required fields."}</p>
-                  <button className="primary-button" type="submit" disabled={busy || (!MOCK_MODE && Object.values(files).every((file) => !file))}>
-                    {busy ? "Processing…" : MOCK_MODE ? "Load application" : "Upload and process"}
-                    <span aria-hidden="true">→</span>
+                  <p>Missing documents will be flagged for the reviewer.</p>
+                  <button className="primary-button start-ai-button" type="submit" disabled={busy || (!MOCK_MODE && !Object.values(files).some(Boolean))}>
+                    Start AI Check <span aria-hidden="true">→</span>
                   </button>
                 </div>
               </form>
             </section>
           )}
 
+          {screen === "Upload" && pendingApplications.length > 0 && (
+            <section className="pending-applications card">
+              <div className="card-heading"><div><h2>Or select a pending application</h2><p>Open a case that is already ready for review.</p></div></div>
+              <ul>{pendingApplications.map((item) => <li key={item.id}>
+                <span><strong>{item.label}</strong><small>{item.id}</small></span>
+                <button type="button" onClick={() => openApplication(item.id)}>Open</button>
+              </li>)}</ul>
+            </section>
+          )}
+
+          {screen === "AI Check" && (
+            <section className="ai-check-card card" aria-live="polite">
+              {!aiCheckError && <span className="splash-spinner ai-check-spinner" role="status" aria-label="Loading" />}
+              <h2>{aiCheckError ? "AI Check stopped" : MOCK_MODE ? "Loading sample review" : "Reading your documents"}</h2>
+              <p className="ai-check-description">{MOCK_MODE ? "Preparing the selected demo application." : "KalaBASA is checking the documents you selected."}</p>
+              <ul className="reading-documents">
+                {MOCK_MODE ? <li><span className="reading-dot" />{FIXTURES.find(([value]) => value === fixture)?.[1] ?? fixture} sample</li> :
+                  DOCUMENTS.filter(([document]) => files[document]).map(([document, label]) => <li key={document}><span className="reading-dot" />{label}<small>{files[document].name}</small></li>)}
+              </ul>
+              <p className="elapsed-time">Elapsed: {elapsedSeconds} seconds</p>
+              {elapsedSeconds > 60 && !aiCheckError && <p className="long-check-note">Still working. Scanned pages take longer.</p>}
+              {aiCheckError && <div className="ai-check-error" role="alert">{aiCheckError}</div>}
+              {aiCheckError && <div className="ai-check-actions">
+                <button className="primary-button" type="button" onClick={retryProcessing} disabled={busy}>Retry</button>
+                <button className="outline-button" type="button" onClick={() => { setAiCheckError(""); setScreen("Upload"); }}>Back to upload</button>
+              </div>}
+            </section>
+          )}
           {screen === "Requirements" && (
             <section className="card">
               <div className="card-heading"><div><h2>Required documents</h2><p>Checklist status based on documents uploaded with this application.</p></div></div>
+              {requirements && <div className="requirements-summary">
+                <div><strong>{submittedRequiredCount} of {requiredDocuments.length} required documents submitted</strong><span>{requiredCompletion}%</span></div>
+                <div className="requirements-progress"><i style={{ width: `${requiredCompletion}%` }} /></div>
+              </div>}
               {requirements ? <div className="requirements-list">
                 {requirements.required_documents.map((rule) => {
                   const isUploaded = uploaded.has(rule.document);
@@ -277,6 +793,7 @@ function App() {
                   </div>;
                 })}
               </div> : <p className="empty-state">Loading requirements…</p>}
+              {requirements && <div className="review-next-action"><button className="primary-button" type="button" onClick={() => setScreen("Extracted Fields")}>View Extracted Fields <span aria-hidden="true">→</span></button></div>}
             </section>
           )}
 
@@ -295,18 +812,29 @@ function App() {
                     : <span className="unverified">⚠ Unverified — review source</span>}</td>
                 </tr>)}</tbody>
               </table></div> : <p className="empty-state">Load or process an application to view extracted fields.</p>}
+              {application?.fields.length > 0 && <div className="review-next-action"><button className="primary-button" type="button" onClick={() => setScreen("Findings")}>View Findings ({application.findings.length}) <span aria-hidden="true">→</span></button></div>}
             </section>
           )}
 
           {screen === "Findings" && (
-            <div className="findings-layout">
+            <>
+            <section className="review-summary-strip">
+              <div className="review-summary-count">{application?.findings.length ?? 0}</div>
+              <div><strong>{application?.findings.length ? `${application.findings.length} findings need your review` : "No findings need review"}</strong><small>{submittedRequiredCount} of {requiredDocuments.length} required documents submitted</small></div>
+            </section>
+            <div className={`findings-layout ${showFindingDetailMobile ? "show-detail-mobile" : ""}`}>
               <section className="card finding-list">
                 <div className="card-heading"><div><h2>Review findings</h2><p>Each finding includes supporting document evidence.</p></div></div>
+                <div className="finding-counts" aria-label="Finding status counts">
+                  {[["open", "Open"], ["confirmed", "Confirmed"], ["dismissed", "Dismissed"], ["escalated", "Escalated"]].map(([status, label]) => (
+                    <span className={`finding-count count-${status}`} key={status}><strong>{application?.findings.filter((finding) => finding.status === status).length ?? 0}</strong>{label}</span>
+                  ))}
+                </div>
                 {application?.findings.length ? application.findings.map((finding) => (
                   <button
                     className={`finding-item ${selectedFinding?.finding_id === finding.finding_id ? "selected" : ""}`}
                     key={finding.finding_id}
-                    onClick={() => setSelectedFindingId(finding.finding_id)}
+                    onClick={() => { setSelectedFindingId(finding.finding_id); setShowFindingDetailMobile(true); }}
                   >
                     <span className={`finding-indicator ${finding.status}`} />
                     <span className="finding-summary">
@@ -319,33 +847,45 @@ function App() {
               </section>
 
               {selectedFinding && <section className="card finding-detail">
+                <button className="mobile-finding-back" type="button" onClick={() => setShowFindingDetailMobile(false)}>← Back to findings</button>
                 <div className="detail-eyebrow">{selectedFinding.rule_id} <span>·</span> {selectedFinding.type.replaceAll("_", " ")}</div>
                 <h2>{selectedFinding.field.replaceAll("_", " ")}</h2>
                 <p className="detail-message">{selectedFinding.message}</p>
                 <h3>Evidence</h3>
-                <div className="evidence-list">
+                {selectedFinding.type === "cross_document_mismatch" && <p className="difference-caption">Highlighted differences (visual aid only)</p>}
+                <div className={`evidence-list ${selectedFinding.type === "cross_document_mismatch" ? "mismatch-evidence-list" : ""}`}>
                   {selectedFinding.evidence.map((evidence, index) => {
+                    const fieldForEvidence = application.fields.find((field) =>
+                      field.field === selectedFinding.field && field.document === evidence.document && field.page === evidence.page && field.source_text === evidence.source_text);
                     const matchedField = application.fields.find((field) =>
-                      field.document === evidence.document && field.field === selectedFinding.field);
+                      field.document === evidence.document && field.page === evidence.page && field.source_text === evidence.source_text && !field.verified);
+                    const otherEvidenceTexts = selectedFinding.evidence
+                      .filter((item, itemIndex) => itemIndex !== index && item.source_text)
+                      .map((item) => item.source_text);
                     return <article className="evidence-card" key={`${evidence.document}-${evidence.page}-${index}`}>
                       <div className="evidence-meta"><strong>{evidence.document.replaceAll("_", " ")}</strong><span>Page {evidence.page}</span></div>
                       {evidence.source_text
-                        ? <blockquote>{textWithHighlight(evidence.source_text, matchedField?.value)}</blockquote>
+                        ? <blockquote>{selectedFinding.type === "cross_document_mismatch"
+                          ? highlightWordDifferences(evidence.source_text, otherEvidenceTexts)
+                          : textWithHighlight(evidence.source_text, fieldForEvidence?.value)}</blockquote>
                         : <div className="evidence-absence">{evidence.note ?? "No source text was available for this absence."}</div>}
                       {evidence.source_text && evidence.note && <div className="evidence-note">{evidence.note}</div>}
+                      {matchedField && <div className="unverified-evidence-warning">This value could not be confirmed in the source. Check the document.</div>}
                     </article>;
                   })}
                 </div>
                 <label className="field-label note-label">Reviewer note
-                  <textarea value={reviewerNote} onChange={(event) => setReviewerNote(event.target.value)} placeholder="Add a note for the review record…" rows="3" />
+                  <textarea value={reviewerNote} onChange={(event) => { setReviewerNote(event.target.value); setNoteError(""); }} placeholder="Add a note for the review record…" rows="3" disabled={finalDecision} />
                 </label>
+                {noteError && <p className="note-error" role="alert">{noteError}</p>}
                 <div className="review-actions">
-                  <button className="outline-button" disabled={busy} onClick={() => updateFinding("confirmed")}>Confirm</button>
-                  <button className="outline-button" disabled={busy} onClick={() => updateFinding("dismissed")}>Dismiss</button>
-                  <button className="outline-button" disabled={busy} onClick={() => updateFinding("escalated")}>Escalate</button>
+                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("confirmed")}>Confirm</button>
+                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("dismissed")}>Dismiss</button>
+                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("escalated")}>Escalate</button>
                 </div>
               </section>}
             </div>
+            </>
           )}
 
           {screen === "Outcome" && (
@@ -362,12 +902,21 @@ function App() {
                     ? "At least one finding is confirmed. Return the application for correction."
                     : "Open or escalated findings must be resolved before a final decision."}</p>
                 <div className="outcome-actions">
-                  <button className="primary-button" disabled={busy || decision !== "approve" || application?.status === "approved"} onClick={() => decide("approve")}>Approve application</button>
-                  <button className="outline-button" disabled={busy || decision !== "return" || application?.status === "returned"} onClick={() => decide("return")}>Return for correction</button>
+                  <button className="primary-button" disabled={busy || decision !== "approve" || finalDecision} onClick={() => decide("approve")}>Approve application</button>
+                  <button className="outline-button" disabled={busy || decision !== "return" || finalDecision} onClick={() => decide("return")}>Return for correction</button>
                 </div>
               </div>
             </section>
           )}
+
+          {screen === "Outcome" && application?.findings?.length > 0 && <section className="card decision-findings">
+            <div className="card-heading"><div><h2>Finding review record</h2><p>Status and saved reviewer notes for every finding.</p></div></div>
+            <ul>{application.findings.map((finding) => <li key={finding.finding_id}>
+              <span className={`decision-status status-${finding.status}`}>{finding.status.replaceAll("_", " ")}</span>
+              <span className="decision-finding-copy"><strong>{finding.field.replaceAll("_", " ")}</strong><small>{finding.message}</small></span>
+              <span className="decision-reviewer-note">{finding.reviewer_note || "No reviewer note"}</span>
+            </li>)}</ul>
+          </section>}
 
           {!application && screen !== "Upload" && <div className="card empty-card"><p className="empty-state">Load an application first to view this section.</p></div>}
 
@@ -378,6 +927,12 @@ function App() {
           </footer>}
         </main>
       </div>
+      <BottomNavigation
+        active={screen === "Home" ? "Home" : "Applications"}
+        onHome={() => setScreen("Home")}
+        onApplications={() => setScreen("Upload")}
+        onScan={() => setScreen("Upload")}
+      />
     </div>
   );
 }

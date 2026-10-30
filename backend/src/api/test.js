@@ -18,9 +18,9 @@ const cleanFixture = Application.parse(JSON.parse(await fs.readFile(
   "utf8",
 )));
 
-async function withApi(callback, application = fixture) {
-  const store = new MemoryStore([application]);
-  const server = createServer(createApp({ store, mockMode: true }));
+async function withApi(callback, application = fixture, appOptions = {}) {
+  const store = new MemoryStore(Array.isArray(application) ? application : [application]);
+  const server = createServer(createApp({ store, mockMode: true, ...appOptions }));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   try {
@@ -29,6 +29,122 @@ async function withApi(callback, application = fixture) {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
+
+test("upload rejects files larger than 20 MB with a clear 400", async () => {
+  await withApi(async (baseUrl) => {
+    const form = new FormData();
+    form.append("files", new Blob([Buffer.alloc(20 * 1024 * 1024 + 1)], { type: "application/pdf" }), "oversized.pdf");
+    const response = await fetch(`${baseUrl}/api/applications`, { method: "POST", body: form });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "Each PDF must be 20 MB or smaller.");
+  });
+});
+
+test("processing extracts documents in parallel in document order and can retry after failure", async () => {
+  const application = Application.parse({
+    ...cleanFixture,
+    id: "app-parallel-retry-test",
+    status: "uploaded",
+    documents: cleanFixture.documents.slice(0, 2),
+    fields: [],
+    findings: [],
+  });
+  let activeExtractions = 0;
+  let maxConcurrentExtractions = 0;
+  let failOnce = true;
+  const appOptions = {
+    mockMode: false,
+    readPdf: async (filePath) => ({
+      pages: [path.basename(filePath).startsWith("application_form") ? "[ ] DTI Certificate" : "DTI certificate"],
+      method: "text_layer",
+    }),
+    extractDocument: async ({ document }) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("Temporary extraction failure.");
+      }
+      activeExtractions += 1;
+      maxConcurrentExtractions = Math.max(maxConcurrentExtractions, activeExtractions);
+      await new Promise((resolve) => setTimeout(resolve, document === "application_form" ? 35 : 10));
+      activeExtractions -= 1;
+      return cleanFixture.fields.filter((field) => field.document === document).slice(0, 1);
+    },
+  };
+
+  await withApi(async (baseUrl, store) => {
+    const processUrl = `${baseUrl}/api/applications/${application.id}/process`;
+    const failed = await fetch(processUrl, { method: "POST" });
+    assert.equal(failed.status, 500);
+    assert.equal((await failed.json()).error, "Temporary extraction failure.");
+    assert.equal((await store.get(application.id)).status, "uploaded");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const retried = await fetch(processUrl, { method: "POST" });
+    assert.equal(retried.status, 202);
+    const processed = await retried.json();
+    assert.equal(processed.status, "ready_for_review");
+    assert.equal(maxConcurrentExtractions, 2);
+    assert.deepEqual(processed.fields.map((field) => field.document), ["application_form", "dti_certificate"]);
+  }, application, appOptions);
+});
+
+test("application list returns validated summaries and open finding counts", async () => {
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/applications`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), [{
+      id: fixture.id,
+      label: fixture.label,
+      status: fixture.status,
+      created_at: fixture.created_at,
+      open_findings: fixture.findings.filter((finding) => ["open", "escalated"].includes(finding.status)).length,
+      total_findings: fixture.findings.length,
+    }]);
+  });
+});
+
+test("activity endpoint maps audit actions to plain text, newest first", async () => {
+  await withApi(async (baseUrl, store) => {
+    const mappings = [
+      ["application_created", {}, "New application received"],
+      ["extraction_completed", { findings: 2 }, "Inconsistency flagged"],
+      ["extraction_completed", { findings: 0 }, "Application processed"],
+      ["application_processed", {}, "Application processed"],
+      ["finding_updated", {}, "Finding reviewed"],
+      ["application_approved", {}, "Application approved"],
+      ["application_returned", {}, "Application returned for correction"],
+    ];
+    for (let index = 0; index < mappings.length; index += 1) {
+      const [action, details] = mappings[index];
+      await store.audit({
+        application_id: fixture.id,
+        action,
+        details,
+        actor: "reviewer",
+        timestamp: new Date(Date.now() + index * 1000).toISOString(),
+      });
+    }
+    const response = await fetch(`${baseUrl}/api/activity?limit=10`);
+    assert.equal(response.status, 200);
+    const activity = await response.json();
+    assert.deepEqual(activity.map((item) => item.text), mappings.map(([, , text]) => text).reverse());
+    assert.equal(activity[0].application_id, fixture.id);
+    assert.ok(Date.parse(activity[0].timestamp) > Date.parse(activity.at(-1).timestamp));
+  });
+});
+
+test("stats count pending, processed today, and flagged applications", async () => {
+  const approved = Application.parse({ ...cleanFixture, id: "approved-today", status: "approved" });
+  const returned = Application.parse({ ...cleanFixture, id: "returned-today", status: "returned" });
+  await withApi(async (baseUrl, store) => {
+    const now = new Date().toISOString();
+    await store.audit({ application_id: approved.id, action: "application_approved", details: {}, actor: "reviewer", timestamp: now });
+    await store.audit({ application_id: returned.id, action: "application_returned", details: {}, actor: "reviewer", timestamp: now });
+    const response = await fetch(`${baseUrl}/api/stats`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { pending: 2, processed_today: 2, flagged: 1 });
+  }, [fixture, cleanFixture, approved, returned]);
+});
 
 test("requirements and fixture application responses are contract-valid", async () => {
   await withApi(async (baseUrl) => {
@@ -78,6 +194,51 @@ test("reviewer updates are audited and decision endpoints enforce nextOutcome", 
     assert.equal(store.auditLog.length, 3);
     assert.ok(store.auditLog.every((entry) => Number.isFinite(Date.parse(entry.timestamp))));
   });
+});
+
+test("dismissed and escalated findings require a non-empty reviewer note", async () => {
+  await withApi(async (baseUrl) => {
+    const url = `${baseUrl}/api/applications/${fixture.id}/findings/${fixture.findings[0].finding_id}`;
+    for (const status of ["dismissed", "escalated"]) {
+      for (const reviewer_note of [undefined, "", "   "]) {
+        const response = await fetch(url, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status, reviewer_note }),
+        });
+        assert.equal(response.status, 400);
+        assert.match((await response.json()).error, /reviewer note is required/i);
+      }
+    }
+    const confirmed = await fetch(url, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "confirmed" }),
+    });
+    assert.equal(confirmed.status, 200);
+    assert.equal((await confirmed.json()).reviewer_note, null);
+  });
+});
+
+test("final decisions lock finding updates and all later approve or return attempts", async () => {
+  const approved = Application.parse({ ...fixture, id: "approved-final-lock", status: "approved" });
+  const returned = Application.parse({ ...fixture, id: "returned-final-lock", status: "returned" });
+  await withApi(async (baseUrl) => {
+    for (const application of [approved, returned]) {
+      const base = `${baseUrl}/api/applications/${application.id}`;
+      const update = await fetch(`${base}/findings/${application.findings[0].finding_id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "confirmed" }),
+      });
+      assert.equal(update.status, 409);
+      for (const outcome of ["approve", "return"]) {
+        const response = await fetch(`${base}/${outcome}`, { method: "POST" });
+        assert.equal(response.status, 409);
+        assert.match((await response.json()).error, /final decision/i);
+      }
+    }
+  }, [approved, returned]);
 });
 
 test("Approve is available only when no finding blocks the outcome", async () => {
