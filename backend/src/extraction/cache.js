@@ -38,6 +38,23 @@ async function writeCache(file, cache) {
   await fs.rename(temporary, file);
 }
 
+const cacheWriteQueues = new Map();
+
+async function writeCacheEntry(file, key, entry) {
+  const previous = cacheWriteQueues.get(file) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    const cache = await readCache(file);
+    cache[key] = entry;
+    await writeCache(file, cache);
+  });
+  cacheWriteQueues.set(file, pending);
+  try {
+    await pending;
+  } finally {
+    if (cacheWriteQueues.get(file) === pending) cacheWriteQueues.delete(file);
+  }
+}
+
 export async function extractDocumentCached({
   document,
   pages,
@@ -70,8 +87,7 @@ export async function extractDocumentCached({
         await onModelCall();
         const response = await createClient(apiKey).messages.create(request);
         const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("");
-        cache[key] = { document, model, text };
-        await writeCache(selectedCacheFile, cache);
+        await writeCacheEntry(selectedCacheFile, key, { document, model, text });
         return response;
       },
     },
