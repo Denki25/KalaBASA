@@ -35,13 +35,18 @@ Render supplies `PORT`; the Express server listens on it automatically.
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Required for live document extraction when `MOCK_MODE=false`. Store as a secret in Render. |
 | `KALABASA_MODEL` | Anthropic model identifier. Optional; defaults to the model configured in `contract/extraction.js`. |
+| `LLM_PROVIDER` | Optional provider selector: `anthropic` (default) or `openai-compatible`. |
+| `LLM_BASE_URL` | Base URL for an OpenAI-compatible `/chat/completions` endpoint. |
+| `LLM_API_KEY` | API key for the selected OpenAI-compatible provider. Store as a secret. |
+| `LLM_MODEL` | Model name for the selected OpenAI-compatible provider. |
+| `LLM_MAX_CONCURRENCY` | Optional extraction concurrency override; defaults to 5 for Anthropic and 2 for other providers. |
 | `SUPABASE_URL` | Supabase project URL. Set together with `SUPABASE_SERVICE_KEY` to enable Supabase storage. |
 | `SUPABASE_SERVICE_KEY` | Supabase service-role key. Store as a secret; never expose it in frontend variables. |
 | `MOCK_MODE` | Set to `true` for fixture-backed demo mode or `false` for real uploads and extraction. This is baked into the frontend at build time; changing it on the host requires a new build/deploy. |
 | `RATE_LIMIT_PER_10MIN` | Maximum create/process POST requests per IP in ten minutes. Defaults to `20`. |
 | `DAILY_EXTRACTION_LIMIT` | Maximum live model calls per UTC day. Defaults to `200`; cached/mock extraction does not count. |
 
-When `MOCK_MODE=true`, the application workflow uses fixtures and does not call Anthropic. For live extraction, set it to `false` and provide `ANTHROPIC_API_KEY`. Supabase is optional; without both Supabase variables, the service uses in-memory metadata storage.
+When `MOCK_MODE=true`, the application workflow uses fixtures and does not call an LLM. For live Anthropic extraction, set `MOCK_MODE=false` and provide `ANTHROPIC_API_KEY`. For an OpenAI-compatible provider, also set `LLM_PROVIDER=openai-compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Supabase is optional; without both Supabase variables, the service uses in-memory metadata storage.
 
 The public URL has no real login: anyone with the link can call the API. Use a separate Anthropic key with a spending limit. Keep `MOCK_MODE=true` on the public URL; use live mode only locally or for short windows, and never upload real documents to this demo deployment.
 

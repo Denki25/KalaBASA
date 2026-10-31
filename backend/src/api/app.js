@@ -11,7 +11,7 @@ import {
   Finding,
   nextOutcome,
 } from "kalabasa-contract/schemas.js";
-import { DailyExtractionLimitError, extractDocumentCached } from "../extraction/cache.js";
+import { DailyExtractionLimitError, extractDocumentCached, getLlmConfig } from "../extraction/cache.js";
 import { readPdfPages } from "../extraction/pdf.js";
 import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "../rules/index.js";
 import {
@@ -85,6 +85,20 @@ function createDailyModelCallGuard(limit) {
   };
 }
 
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(items.length, limit);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }));
+  return results;
+}
+
 function audit(store, application, action, details = {}) {
   return store.audit({
     application_id: application.id,
@@ -147,8 +161,13 @@ export function createApp({
   extractDocument = extractDocumentCached,
   rateLimitPer10Min = Number.parseInt(process.env.RATE_LIMIT_PER_10MIN ?? "20", 10),
   dailyExtractionLimit = Number.parseInt(process.env.DAILY_EXTRACTION_LIMIT ?? "200", 10),
+  llmMaxConcurrency,
 } = {}) {
   const app = express();
+  const llmConfig = getLlmConfig();
+  const configuredConcurrency = Number.parseInt(process.env.LLM_MAX_CONCURRENCY ?? "", 10);
+  const maxConcurrency = Math.max(1, llmMaxConcurrency
+    ?? (Number.isFinite(configuredConcurrency) ? configuredConcurrency : llmConfig.provider === "anthropic" ? 5 : 2));
   app.set("trust proxy", 1);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const mutationRateLimit = createIpRateLimiter(Number.isFinite(rateLimitPer10Min) ? Math.max(0, rateLimitPer10Min) : 20);
@@ -274,6 +293,8 @@ export function createApp({
   });
 
   app.post("/api/applications/:id/process", mutationRateLimit, async (request, response, next) => {
+    response.set("X-LLM-Provider", llmConfig.provider);
+    response.set("X-LLM-Model", llmConfig.model);
     let application;
     try {
       application = await store.get(request.params.id);
@@ -286,13 +307,20 @@ export function createApp({
       application.status = "extracting";
       await store.save(application);
       await audit(store, application, "extraction_started");
-      const fieldGroups = await Promise.all(application.documents.map(async (document) => {
+      const fieldGroups = await mapWithConcurrency(application.documents, maxConcurrency, async (document) => {
         const filePath = path.join(uploadRoot, application.id, `${document.document}.pdf`);
         const { pages, method } = await readPdf(filePath);
         document.pages = pages.length;
         document.method = method;
-        return extractDocument({ document: document.document, pages, method, onModelCall: reserveDailyModelCall });
-      }));
+        return extractDocument({
+          document: document.document,
+          pages,
+          method,
+          provider: llmConfig.provider,
+          model: llmConfig.model,
+          onModelCall: reserveDailyModelCall,
+        });
+      });
       const allFields = fieldGroups.flat();
       application.fields = allFields;
       const uploaded = await uploadedDocuments(application, readPdf);

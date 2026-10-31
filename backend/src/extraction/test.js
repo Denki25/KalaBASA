@@ -1,18 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_MODEL } from "kalabasa-contract/extraction.js";
-import { extractDocumentCached } from "./cache.js";
+import { extractDocumentCached, getLlmConfig } from "./cache.js";
 import { readPdfPages } from "./pdf.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const samplesRoot = path.join(repoRoot, "samples");
 const live = process.argv.includes("--live");
 const marker = "CACHED/SEEDED ANSWERS - NOT LIVE AI ACCURACY";
-const model = process.env.KALABASA_MODEL || DEFAULT_MODEL;
+const llm = getLlmConfig();
 
-if (live && !process.env.ANTHROPIC_API_KEY) {
-  console.error("Cannot run live extraction: ANTHROPIC_API_KEY is not set.");
+if (live && !llm.apiKey) {
+  const keyName = llm.provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+  console.error(`Cannot run live extraction: ${keyName} is not set.`);
   process.exitCode = 1;
 } else {
   if (!live) console.log(marker);
@@ -25,7 +25,7 @@ if (live && !process.env.ANTHROPIC_API_KEY) {
     let unverified = 0;
     const results = new Map();
 
-    if (live) console.log(`Live extraction model: ${model}`);
+    if (live) console.log(`PROVIDER / MODEL: ${llm.provider} / ${llm.model}`);
     for (const setName of sets) {
       const setPath = path.join(samplesRoot, setName);
       const expected = JSON.parse(await fs.readFile(path.join(setPath, "expected.json"), "utf8"));
@@ -35,7 +35,14 @@ if (live && !process.env.ANTHROPIC_API_KEY) {
       for (const filename of files) {
         const document = path.basename(filename, path.extname(filename));
         const { pages, method } = await readPdfPages(path.join(setPath, filename));
-        extracted.push(...await extractDocumentCached({ document, pages, method, model, live }));
+        extracted.push(...await extractDocumentCached({
+          document,
+          pages,
+          method,
+          model: llm.model,
+          provider: llm.provider,
+          live,
+        }));
       }
       results.set(setName, { expected, fields: extracted });
       unverified += extracted.filter((field) => field.verified === false).length;

@@ -3,3 +3,4 @@ dist/
 .env
 backend/.cache/tesseract/
 backend/.cache/uploads/
+backend/.cache/live-responses.json

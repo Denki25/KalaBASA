@@ -167,6 +167,40 @@ test("processing extracts documents in parallel in document order and can retry 
   }, application, appOptions);
 });
 
+test("processing limits extraction concurrency and returns provider/model headers", async () => {
+  const application = Application.parse({
+    ...cleanFixture,
+    id: "bounded-concurrency-test",
+    status: "uploaded",
+    documents: cleanFixture.documents.slice(0, 4),
+    fields: [],
+    findings: [],
+  });
+  let active = 0;
+  let maxActive = 0;
+  const options = {
+    mockMode: false,
+    llmMaxConcurrency: 2,
+    readPdf: async () => ({ pages: ["fake document"], method: "text_layer" }),
+    extractDocument: async ({ document }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      active -= 1;
+      return cleanFixture.fields.filter((field) => field.document === document);
+    },
+  };
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
+    assert.equal(response.status, 202);
+    assert.equal(maxActive, 2);
+    assert.equal(response.headers.get("x-llm-provider"), "anthropic");
+    assert.ok(response.headers.get("x-llm-model"));
+    const processed = await response.json();
+    assert.deepEqual([...new Set(processed.fields.map((field) => field.document))], application.documents.map((item) => item.document));
+  }, application, options);
+});
+
 test("application list returns validated summaries and open finding counts", async () => {
   await withApi(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/applications`);
