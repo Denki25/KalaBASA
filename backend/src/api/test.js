@@ -30,6 +30,18 @@ async function withApi(callback, application = fixture, appOptions = {}) {
   }
 }
 
+test("health endpoint reports the API and mock mode", async () => {
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/health`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, mock_mode: true });
+  });
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/health`);
+    assert.deepEqual(await response.json(), { ok: true, mock_mode: false });
+  }, fixture, { mockMode: false });
+});
+
 test("upload rejects files larger than 20 MB with a clear 400", async () => {
   await withApi(async (baseUrl) => {
     const form = new FormData();
@@ -265,7 +277,7 @@ test("mock application creation and process return fixture data without extracti
       body: JSON.stringify({ status: "invented" }),
     });
     assert.equal(invalid.status, 400);
-    const notFound = await fetch(`${baseUrl}/unknown`);
+    const notFound = await fetch(`${baseUrl}/api/unknown`);
     assert.equal(notFound.status, 404);
   }, empty);
 });

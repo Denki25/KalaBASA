@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +30,8 @@ const apiDirectory = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(apiDirectory, "../..");
 const repositoryRoot = path.resolve(backendRoot, "..");
 const fixturesDirectory = path.join(repositoryRoot, "contract", "fixtures");
+const frontendDirectory = path.join(repositoryRoot, "frontend", "dist");
+const frontendIndex = path.join(frontendDirectory, "index.html");
 const requirementsPath = path.join(repositoryRoot, "samples", "lgu_requirements.json");
 const uploadRoot = path.join(backendRoot, ".cache", "uploads");
 const requirements = Requirements.parse(JSON.parse(await fs.readFile(requirementsPath, "utf8")));
@@ -113,6 +116,8 @@ export function createApp({
   const app = express();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   app.use(express.json({ limit: "1mb" }));
+
+  app.get("/api/health", (request, response) => response.json({ ok: true, mock_mode: mockMode }));
 
   app.get("/api/lgus/:id/requirements", (request, response) => {
     if (request.params.id !== requirements.lgu.id) return sendError(response, 404, "LGU not found.");
@@ -337,6 +342,12 @@ export function createApp({
     });
   }
 
+  if (existsSync(frontendIndex)) {
+    app.use(express.static(frontendDirectory));
+    app.get(/^(?!\/api(?:\/|$))/i, (request, response, next) => {
+      response.sendFile(frontendIndex, (error) => { if (error) next(error); });
+    });
+  }
   app.use((request, response) => sendError(response, 404, "API route not found."));
   app.use((error, request, response, next) => {
     if (response.headersSent) return next(error);

@@ -9,6 +9,7 @@
 - Express routes validate successful responses with the Zod contract and enforce `nextOutcome()` before approve/return. Reviewer actions are written to the audit log.
 - Finding updates require a non-empty reviewer note when dismissed or escalated; final decisions lock further finding updates and decision attempts. Review tabs, evidence highlights, and confirmation dialogs are frontend presentation around these real API checks.
 - The frontend is a React/Vite application that calls the Express API and displays evidence, reviewer notes, and outcome controls.
+- In production, the Express API serves `frontend/dist` and falls back to its `index.html` for browser routes; `/api/health` reports process health and the current mock-mode setting.
 - With no `ANTHROPIC_API_KEY`, sample PDFs replay extraction answers from `backend/.cache/extraction-responses.json`, seeded from `expected.json`; this is not live AI extraction.
 - The startup splash checks the real requirements endpoint before showing the existing first screen; its 1.5-second minimum display time is cosmetic.
 - The login screen is cosmetic and accepts any input; it does not authenticate users.
