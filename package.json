@@ -9,7 +9,8 @@
     "frontend"
   ],
   "scripts": {
-    "test:extraction": "node backend/src/extraction/test.js",
+    "test:extraction": "node backend/src/extraction/test.js && node backend/src/extraction/cache.test.js",
+    "test:extraction:live": "node backend/src/extraction/test.js --live",
     "test:ocr": "node backend/src/extraction/ocr-test.js",
     "test:rules": "node backend/src/rules/test.js",
     "test:api": "node --test backend/src/api/test.js",

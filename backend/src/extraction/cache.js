@@ -6,7 +6,15 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_MODEL, extractDocument } from "kalabasa-contract/extraction.js";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const cacheFile = path.join(backendRoot, ".cache", "extraction-responses.json");
+export const seededCacheFile = path.join(backendRoot, ".cache", "extraction-responses.json");
+export const liveResponsesFile = path.join(backendRoot, ".cache", "live-responses.json");
+
+export class DailyExtractionLimitError extends Error {
+  constructor() {
+    super("Daily extraction limit reached");
+    this.status = 429;
+  }
+}
 
 export function cacheKey({ document, pages, model = DEFAULT_MODEL }) {
   return createHash("sha256")
@@ -14,42 +22,56 @@ export function cacheKey({ document, pages, model = DEFAULT_MODEL }) {
     .digest("hex");
 }
 
-async function readCache() {
+async function readCache(file) {
   try {
-    return JSON.parse(await fs.readFile(cacheFile, "utf8"));
+    return JSON.parse(await fs.readFile(file, "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") return {};
     throw error;
   }
 }
 
-async function writeCache(cache) {
-  await fs.mkdir(path.dirname(cacheFile), { recursive: true });
-  const temporary = `${cacheFile}.${process.pid}.tmp`;
+async function writeCache(file, cache) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
-  await fs.rename(temporary, cacheFile);
+  await fs.rename(temporary, file);
 }
 
-export async function extractDocumentCached({ document, pages, method, model = DEFAULT_MODEL }) {
+export async function extractDocumentCached({
+  document,
+  pages,
+  method,
+  model = DEFAULT_MODEL,
+  live = false,
+  cacheFile = seededCacheFile,
+  liveFile = liveResponsesFile,
+  apiKey = process.env.ANTHROPIC_API_KEY,
+  createClient = (key) => new Anthropic({ apiKey: key }),
+  readCacheFile = readCache,
+  onModelCall = async () => {},
+}) {
   const key = cacheKey({ document, pages, model });
-  const cache = await readCache();
+  const selectedCacheFile = live ? liveFile : cacheFile;
+  const cache = live ? {} : await readCacheFile(cacheFile);
   const entry = cache[key];
-  const apiKey = process.env.ANTHROPIC_API_KEY;
 
   const client = {
     messages: {
       async create(request) {
-        if (!apiKey) {
+        if (!live && !apiKey) {
           if (!entry) {
             throw new Error(`No cached extraction for ${document}; set ANTHROPIC_API_KEY to call Anthropic.`);
           }
           return { content: [{ type: "text", text: entry.text }] };
         }
 
-        const response = await new Anthropic({ apiKey }).messages.create(request);
+        if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required for live extraction.");
+        await onModelCall();
+        const response = await createClient(apiKey).messages.create(request);
         const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("");
         cache[key] = { document, model, text };
-        await writeCache(cache);
+        await writeCache(selectedCacheFile, cache);
         return response;
       },
     },
