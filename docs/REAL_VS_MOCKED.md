@@ -10,7 +10,8 @@
 - Finding updates require a non-empty reviewer note when dismissed or escalated; final decisions lock further finding updates and decision attempts. Review tabs, evidence highlights, and confirmation dialogs are frontend presentation around these real API checks.
 - The frontend is a React/Vite application that calls the Express API and displays evidence, reviewer notes, and outcome controls.
 - In production, the Express API serves `frontend/dist` and falls back to its `index.html` for browser routes; `/api/health` reports process health and the current mock-mode setting.
-- With no `ANTHROPIC_API_KEY`, sample PDFs replay extraction answers from `backend/.cache/extraction-responses.json`, seeded from `expected.json`; this is not live AI extraction.
+- With no `ANTHROPIC_API_KEY`, sample PDFs replay extraction answers from `backend/.cache/extraction-responses.json`, seeded from `expected.json`; this is not live AI extraction. The normal `npm run test:extraction` prints `CACHED/SEEDED ANSWERS - NOT LIVE AI ACCURACY` and these seeded results must never be reported as AI accuracy.
+- `npm run test:extraction:live` requires `ANTHROPIC_API_KEY`, always calls the configured model, compares each field with `expected.json`, reports critical checks and accuracy, and writes only to `backend/.cache/live-responses.json`. It does not read or change the seeded cache; live responses are never used as the offline fallback unless copied over manually.
 - The startup splash checks the real requirements endpoint before showing the existing first screen; its 1.5-second minimum display time is cosmetic.
 - The login screen is cosmetic and accepts any input; it does not authenticate users.
 - Home statistics and recent activity are computed from stored applications and audit-log timestamps; in mock mode they are seeded from the fixture applications.
