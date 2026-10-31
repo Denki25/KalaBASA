@@ -93,5 +93,10 @@ export async function extractDocumentCached({
     },
   };
 
-  return extractDocument({ document, pages, method, client, model });
+  try {
+    return await extractDocument({ document, pages, method, client, model });
+  } catch (error) {
+    if (error.message?.includes("Daily extraction limit reached")) throw new DailyExtractionLimitError();
+    throw error;
+  }
 }

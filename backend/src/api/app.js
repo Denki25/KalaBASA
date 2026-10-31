@@ -11,7 +11,7 @@ import {
   Finding,
   nextOutcome,
 } from "kalabasa-contract/schemas.js";
-import { extractDocumentCached } from "../extraction/cache.js";
+import { DailyExtractionLimitError, extractDocumentCached } from "../extraction/cache.js";
 import { readPdfPages } from "../extraction/pdf.js";
 import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "../rules/index.js";
 import {
@@ -51,6 +51,39 @@ async function loadFixtures() {
 }
 
 const fixtureApplications = await loadFixtures();
+
+function createIpRateLimiter(limit, windowMs = 10 * 60 * 1000) {
+  const requests = new Map();
+  return (request, response, next) => {
+    const now = Date.now();
+    for (const [key, value] of requests) {
+      if (now - value.startedAt >= windowMs) requests.delete(key);
+    }
+    const ip = request.ip || request.socket.remoteAddress || "unknown";
+    const bucket = requests.get(ip);
+    if (!bucket || now - bucket.startedAt >= windowMs) {
+      requests.set(ip, { startedAt: now, count: 1 });
+      return next();
+    }
+    if (bucket.count >= limit) return sendError(response, 429, "Too many requests. Please try again later.");
+    bucket.count += 1;
+    return next();
+  };
+}
+
+function createDailyModelCallGuard(limit) {
+  let utcDay = new Date().toISOString().slice(0, 10);
+  let calls = 0;
+  return () => {
+    const currentDay = new Date().toISOString().slice(0, 10);
+    if (currentDay !== utcDay) {
+      utcDay = currentDay;
+      calls = 0;
+    }
+    if (calls >= limit) throw new DailyExtractionLimitError();
+    calls += 1;
+  };
+}
 
 function audit(store, application, action, details = {}) {
   return store.audit({
@@ -112,9 +145,14 @@ export function createApp({
   mockMode = process.env.MOCK_MODE === "true",
   readPdf = readPdfPages,
   extractDocument = extractDocumentCached,
+  rateLimitPer10Min = Number.parseInt(process.env.RATE_LIMIT_PER_10MIN ?? "20", 10),
+  dailyExtractionLimit = Number.parseInt(process.env.DAILY_EXTRACTION_LIMIT ?? "200", 10),
 } = {}) {
   const app = express();
+  app.set("trust proxy", 1);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+  const mutationRateLimit = createIpRateLimiter(Number.isFinite(rateLimitPer10Min) ? Math.max(0, rateLimitPer10Min) : 20);
+  const reserveDailyModelCall = createDailyModelCallGuard(Number.isFinite(dailyExtractionLimit) ? Math.max(0, dailyExtractionLimit) : 200);
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/api/health", (request, response) => response.json({ ok: true, mock_mode: mockMode }));
@@ -175,7 +213,7 @@ export function createApp({
     }
   });
 
-  app.post("/api/applications", upload.array("files"), async (request, response, next) => {
+  app.post("/api/applications", mutationRateLimit, upload.array("files"), async (request, response, next) => {
     try {
       if (mockMode) {
         const fixture = fixtureApplications.find((item) =>
@@ -235,7 +273,7 @@ export function createApp({
     }
   });
 
-  app.post("/api/applications/:id/process", async (request, response, next) => {
+  app.post("/api/applications/:id/process", mutationRateLimit, async (request, response, next) => {
     let application;
     try {
       application = await store.get(request.params.id);
@@ -253,7 +291,7 @@ export function createApp({
         const { pages, method } = await readPdf(filePath);
         document.pages = pages.length;
         document.method = method;
-        return extractDocument({ document: document.document, pages, method });
+        return extractDocument({ document: document.document, pages, method, onModelCall: reserveDailyModelCall });
       }));
       const allFields = fieldGroups.flat();
       application.fields = allFields;
@@ -274,6 +312,7 @@ export function createApp({
         await audit(store, application, "extraction_failed");
       }
       if (error instanceof Error && error.name === "ZodError") return sendError(response, 400, error.message);
+      if (error instanceof DailyExtractionLimitError) return sendError(response, 429, error.message);
       return sendError(response, 500, error.message || "The application could not be processed.");
     }
   });
