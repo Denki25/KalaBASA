@@ -42,6 +42,73 @@ test("health endpoint reports the API and mock mode", async () => {
   }, fixture, { mockMode: false });
 });
 
+test("request limiter caps POST create requests per IP and leaves GET routes unthrottled", async () => {
+  await withApi(async (baseUrl) => {
+    const first = await fetch(`${baseUrl}/api/applications`, { method: "POST" });
+    assert.equal(first.status, 201);
+    assert.equal((await fetch(`${baseUrl}/api/health`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/applications`)).status, 200);
+
+    const second = await fetch(`${baseUrl}/api/applications`, { method: "POST" });
+    assert.equal(second.status, 429);
+    assert.equal((await second.json()).error, "Too many requests. Please try again later.");
+  }, fixture, { rateLimitPer10Min: 1 });
+});
+
+test("request limiter applies to process requests", async () => {
+  await withApi(async (baseUrl) => {
+    const url = `${baseUrl}/api/applications/${fixture.id}/process`;
+    assert.equal((await fetch(url, { method: "POST" })).status, 202);
+    const limited = await fetch(url, { method: "POST" });
+    assert.equal(limited.status, 429);
+    assert.equal((await limited.json()).error, "Too many requests. Please try again later.");
+  }, fixture, { rateLimitPer10Min: 1 });
+});
+
+test("request limiter keeps separate IP buckets", async () => {
+  await withApi(async (baseUrl) => {
+    const first = await fetch(`${baseUrl}/api/applications`, {
+      method: "POST",
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    });
+    const secondIp = await fetch(`${baseUrl}/api/applications`, {
+      method: "POST",
+      headers: { "x-forwarded-for": "203.0.113.11" },
+    });
+    assert.equal(first.status, 201);
+    assert.equal(secondIp.status, 201);
+  }, fixture, { rateLimitPer10Min: 1 });
+});
+
+test("daily extraction limit returns 429 without making an over-limit model call", async () => {
+  const application = Application.parse({
+    ...cleanFixture,
+    id: "daily-extraction-limit-test",
+    status: "uploaded",
+    documents: cleanFixture.documents.slice(0, 2),
+    fields: [],
+    findings: [],
+  });
+  let modelCalls = 0;
+  const options = {
+    mockMode: false,
+    dailyExtractionLimit: 1,
+    readPdf: async () => ({ pages: ["test document contents"], method: "text_layer" }),
+    extractDocument: async ({ onModelCall }) => {
+      await onModelCall();
+      modelCalls += 1;
+      return [];
+    },
+  };
+  await withApi(async (baseUrl, store) => {
+    const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error, "Daily extraction limit reached");
+    assert.equal(modelCalls, 1);
+    assert.equal((await store.get(application.id)).status, "uploaded");
+  }, application, options);
+});
+
 test("upload rejects files larger than 20 MB with a clear 400", async () => {
   await withApi(async (baseUrl) => {
     const form = new FormData();
@@ -98,6 +165,40 @@ test("processing extracts documents in parallel in document order and can retry 
     assert.equal(maxConcurrentExtractions, 2);
     assert.deepEqual(processed.fields.map((field) => field.document), ["application_form", "dti_certificate"]);
   }, application, appOptions);
+});
+
+test("processing limits extraction concurrency and returns provider/model headers", async () => {
+  const application = Application.parse({
+    ...cleanFixture,
+    id: "bounded-concurrency-test",
+    status: "uploaded",
+    documents: cleanFixture.documents.slice(0, 4),
+    fields: [],
+    findings: [],
+  });
+  let active = 0;
+  let maxActive = 0;
+  const options = {
+    mockMode: false,
+    llmMaxConcurrency: 2,
+    readPdf: async () => ({ pages: ["fake document"], method: "text_layer" }),
+    extractDocument: async ({ document }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      active -= 1;
+      return cleanFixture.fields.filter((field) => field.document === document);
+    },
+  };
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
+    assert.equal(response.status, 202);
+    assert.equal(maxActive, 2);
+    assert.equal(response.headers.get("x-llm-provider"), "anthropic");
+    assert.ok(response.headers.get("x-llm-model"));
+    const processed = await response.json();
+    assert.deepEqual([...new Set(processed.fields.map((field) => field.document))], application.documents.map((item) => item.document));
+  }, application, options);
 });
 
 test("application list returns validated summaries and open finding counts", async () => {
