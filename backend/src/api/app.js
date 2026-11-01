@@ -11,7 +11,7 @@ import {
   Finding,
   nextOutcome,
 } from "kalabasa-contract/schemas.js";
-import { extractDocumentCached } from "../extraction/cache.js";
+import { DailyExtractionLimitError, extractDocumentCached, getLlmConfig } from "../extraction/cache.js";
 import { readPdfPages } from "../extraction/pdf.js";
 import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "../rules/index.js";
 import {
@@ -53,6 +53,53 @@ async function loadFixtures() {
 }
 
 const fixtureApplications = await loadFixtures();
+
+function createIpRateLimiter(limit, windowMs = 10 * 60 * 1000) {
+  const requests = new Map();
+  return (request, response, next) => {
+    const now = Date.now();
+    for (const [key, value] of requests) {
+      if (now - value.startedAt >= windowMs) requests.delete(key);
+    }
+    const ip = request.ip || request.socket.remoteAddress || "unknown";
+    const bucket = requests.get(ip);
+    if (!bucket || now - bucket.startedAt >= windowMs) {
+      requests.set(ip, { startedAt: now, count: 1 });
+      return next();
+    }
+    if (bucket.count >= limit) return sendError(response, 429, "Too many requests. Please try again later.");
+    bucket.count += 1;
+    return next();
+  };
+}
+
+function createDailyModelCallGuard(limit) {
+  let utcDay = new Date().toISOString().slice(0, 10);
+  let calls = 0;
+  return () => {
+    const currentDay = new Date().toISOString().slice(0, 10);
+    if (currentDay !== utcDay) {
+      utcDay = currentDay;
+      calls = 0;
+    }
+    if (calls >= limit) throw new DailyExtractionLimitError();
+    calls += 1;
+  };
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(items.length, limit);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }));
+  return results;
+}
 
 function audit(store, application, action, details = {}) {
   return store.audit({
@@ -115,9 +162,19 @@ export function createApp({
   extractDocument = extractDocumentCached,
   auth = null,
   fileStorage = createLocalStorage(uploadRoot),
+  rateLimitPer10Min = Number.parseInt(process.env.RATE_LIMIT_PER_10MIN ?? "20", 10),
+  dailyExtractionLimit = Number.parseInt(process.env.DAILY_EXTRACTION_LIMIT ?? "200", 10),
+  llmMaxConcurrency,
 } = {}) {
   const app = express();
+  const llmConfig = getLlmConfig();
+  const configuredConcurrency = Number.parseInt(process.env.LLM_MAX_CONCURRENCY ?? "", 10);
+  const maxConcurrency = Math.max(1, llmMaxConcurrency
+    ?? (Number.isFinite(configuredConcurrency) ? configuredConcurrency : llmConfig.provider === "anthropic" ? 5 : 2));
+  app.set("trust proxy", 1);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+  const mutationRateLimit = createIpRateLimiter(Number.isFinite(rateLimitPer10Min) ? Math.max(0, rateLimitPer10Min) : 20);
+  const reserveDailyModelCall = createDailyModelCallGuard(Number.isFinite(dailyExtractionLimit) ? Math.max(0, dailyExtractionLimit) : 200);
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/api/health", (request, response) => response.json({ ok: true, mock_mode: mockMode }));
@@ -227,6 +284,7 @@ export function createApp({
   });
 
   app.post("/api/applications", needWrite, upload.array("files"), async (request, response, next) => {
+  app.post("/api/applications", mutationRateLimit, upload.array("files"), async (request, response, next) => {
     try {
       if (mockMode) {
         const fixture = fixtureApplications.find((item) =>
@@ -291,7 +349,9 @@ export function createApp({
     }
   });
 
-  app.post("/api/applications/:id/process", async (request, response, next) => {
+  app.post("/api/applications/:id/process", mutationRateLimit, async (request, response, next) => {
+    response.set("X-LLM-Provider", llmConfig.provider);
+    response.set("X-LLM-Model", llmConfig.model);
     let application;
     try {
       application = await store.get(request.params.id);
@@ -306,10 +366,20 @@ export function createApp({
       await audit(store, application, "extraction_started");
       const fieldGroups = await Promise.all(application.documents.map(async (document) => {
         const { pages, method } = await fileStorage.withFile(application.id, document.document, (filePath) => readPdf(filePath));
+      const fieldGroups = await mapWithConcurrency(application.documents, maxConcurrency, async (document) => {
+        const filePath = path.join(uploadRoot, application.id, `${document.document}.pdf`);
+        const { pages, method } = await readPdf(filePath);
         document.pages = pages.length;
         document.method = method;
-        return extractDocument({ document: document.document, pages, method });
-      }));
+        return extractDocument({
+          document: document.document,
+          pages,
+          method,
+          provider: llmConfig.provider,
+          model: llmConfig.model,
+          onModelCall: reserveDailyModelCall,
+        });
+      });
       const allFields = fieldGroups.flat();
       application.fields = allFields;
       const uploaded = await uploadedDocuments(application, readPdf, fileStorage);
@@ -329,6 +399,7 @@ export function createApp({
         await audit(store, application, "extraction_failed");
       }
       if (error instanceof Error && error.name === "ZodError") return sendError(response, 400, error.message);
+      if (error instanceof DailyExtractionLimitError) return sendError(response, 429, error.message);
       return sendError(response, 500, error.message || "The application could not be processed.");
     }
   });
