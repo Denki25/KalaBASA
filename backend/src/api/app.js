@@ -25,6 +25,8 @@ import {
 } from "./schemas.js";
 import { createStore } from "./store.js";
 import { readApplicationChecklist } from "./checklist.js";
+import { WRITE_ROLES, authMiddleware, currentActor } from "./auth.js";
+import { createLocalStorage } from "./documents.js";
 
 const apiDirectory = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(apiDirectory, "../..");
@@ -103,7 +105,7 @@ function audit(store, application, action, details = {}) {
   return store.audit({
     application_id: application.id,
     action,
-    actor: "reviewer",
+    actor: currentActor(),
     details,
     timestamp: new Date().toISOString(),
   });
@@ -143,12 +145,11 @@ function activityText(entry) {
   }
 }
 
-function uploadedDocuments(application, readPdf = readPdfPages) {
+function uploadedDocuments(application, readPdf, fileStorage) {
   const docs = application.documents.map((item) => item.document);
   const form = application.documents.find((item) => item.document === "application_form");
   if (!form) return docs;
-  const filename = path.join(uploadRoot, application.id, `${form.document}.pdf`);
-  return readPdf(filename).then(({ pages }) => [
+  return fileStorage.withFile(application.id, form.document, (filename) => readPdf(filename)).then(({ pages }) => [
     { document: form.document, checklist: readApplicationChecklist(pages) },
     ...docs.filter((document) => document !== form.document),
   ]);
@@ -159,6 +160,8 @@ export function createApp({
   mockMode = process.env.MOCK_MODE === "true",
   readPdf = readPdfPages,
   extractDocument = extractDocumentCached,
+  auth = null,
+  fileStorage = createLocalStorage(uploadRoot),
   rateLimitPer10Min = Number.parseInt(process.env.RATE_LIMIT_PER_10MIN ?? "20", 10),
   dailyExtractionLimit = Number.parseInt(process.env.DAILY_EXTRACTION_LIMIT ?? "200", 10),
   llmMaxConcurrency,
@@ -181,9 +184,54 @@ export function createApp({
     return sendParsed(response, Requirements, requirements);
   });
 
+  // ---- Login and access control (turned on when `auth` is given) ----
+  const authEnabled = Boolean(auth);
+  const canSee = (request, lguId) => !authEnabled || request.user.role === "admin" || request.user.lgu_id === lguId;
+  const needWrite = (request, response, next) => {
+    if (!authEnabled || WRITE_ROLES.includes(request.user?.role)) return next();
+    return sendError(response, 403, "Your role can view applications but cannot change them.");
+  };
+  const visibleApplications = async (request) =>
+    (await store.list()).filter((item) => canSee(request, item.lgu_id));
+
+  if (authEnabled) {
+    app.post("/api/auth/login", async (request, response, next) => {
+      try {
+        const email = String(request.body?.email ?? "").trim();
+        const password = String(request.body?.password ?? "");
+        if (!email || !password) return sendError(response, 400, "Enter your email and password.");
+        const result = await auth.login(email, password);
+        if (result.error) return sendError(response, 401, result.error);
+        return response.json({ token: result.token, user: result.user });
+      } catch (error) {
+        return next(error);
+      }
+    });
+
+    // Everything below this line needs a signed-in user.
+    app.use("/api", authMiddleware(auth));
+
+    app.get("/api/auth/me", (request, response) => response.json({ user: request.user }));
+
+    // Every /api/applications/:id/... route: the application must belong to the user's LGU
+    // (admins can see all LGUs), and only reviewers and admins may change it.
+    app.use("/api/applications/:id", async (request, response, next) => {
+      try {
+        const application = await store.get(request.params.id);
+        if (!application || !canSee(request, application.lgu_id)) {
+          return sendError(response, 404, "Application not found.");
+        }
+        if (request.method !== "GET") return needWrite(request, response, next);
+        return next();
+      } catch (error) {
+        return next(error);
+      }
+    });
+  }
+
   app.get("/api/applications", async (request, response, next) => {
     try {
-      return sendParsed(response, ApplicationsResponse, await store.list());
+      return sendParsed(response, ApplicationsResponse, await visibleApplications(request));
     } catch (error) {
       return next(error);
     }
@@ -193,8 +241,10 @@ export function createApp({
     try {
       const requestedLimit = Number(request.query.limit ?? 10);
       const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(0, Math.floor(requestedLimit))) : 10;
-      let entries = await store.recentAudit(5000);
-      if (mockMode) entries = fixtureAudit(await store.list(), entries);
+      const visible = await visibleApplications(request);
+      const visibleIds = new Set(visible.map((item) => item.id));
+      let entries = (await store.recentAudit(5000)).filter((entry) => visibleIds.has(entry.application_id));
+      if (mockMode) entries = fixtureAudit(visible, entries);
       const activity = entries
         .map((entry) => ({
           application_id: entry.application_id,
@@ -213,8 +263,9 @@ export function createApp({
 
   app.get("/api/stats", async (request, response, next) => {
     try {
-      const applications = await store.list();
-      let entries = await store.recentAudit(5000);
+      const applications = await visibleApplications(request);
+      const visibleIds = new Set(applications.map((item) => item.id));
+      let entries = (await store.recentAudit(5000)).filter((entry) => visibleIds.has(entry.application_id));
       if (mockMode) entries = fixtureAudit(applications, entries);
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
@@ -232,6 +283,7 @@ export function createApp({
     }
   });
 
+  app.post("/api/applications", needWrite, upload.array("files"), async (request, response, next) => {
   app.post("/api/applications", mutationRateLimit, upload.array("files"), async (request, response, next) => {
     try {
       if (mockMode) {
@@ -259,23 +311,28 @@ export function createApp({
       }
 
       const id = crypto.randomUUID();
-      const directory = path.join(uploadRoot, id);
-      await fs.mkdir(directory, { recursive: true });
       const documents = [];
-      for (let index = 0; index < files.length; index++) {
-        const file = files[index];
-        await fs.writeFile(path.join(directory, `${parsedTypes[index]}.pdf`), file.buffer);
-        documents.push({
-          document: parsedTypes[index],
-          filename: path.basename(file.originalname),
-          pages: 1,
-          method: "text_layer",
-        });
+      const stored = [];
+      try {
+        for (let index = 0; index < files.length; index++) {
+          const file = files[index];
+          await fileStorage.save(id, parsedTypes[index], file.buffer);
+          stored.push(parsedTypes[index]);
+          documents.push({
+            document: parsedTypes[index],
+            filename: path.basename(file.originalname),
+            pages: 1,
+            method: "text_layer",
+          });
+        }
+      } catch (error) {
+        await fileStorage.remove(id, stored).catch(() => {});
+        throw error;
       }
 
       const application = Application.parse({
         id,
-        lgu_id: request.body.lgu_id ?? requirements.lgu.id,
+        lgu_id: authEnabled ? request.user.lgu_id : (request.body.lgu_id ?? requirements.lgu.id),
         label: request.body.label ?? "Business Permit Application",
         status: "uploaded",
         created_at: new Date().toISOString(),
@@ -307,6 +364,8 @@ export function createApp({
       application.status = "extracting";
       await store.save(application);
       await audit(store, application, "extraction_started");
+      const fieldGroups = await Promise.all(application.documents.map(async (document) => {
+        const { pages, method } = await fileStorage.withFile(application.id, document.document, (filePath) => readPdf(filePath));
       const fieldGroups = await mapWithConcurrency(application.documents, maxConcurrency, async (document) => {
         const filePath = path.join(uploadRoot, application.id, `${document.document}.pdf`);
         const { pages, method } = await readPdf(filePath);
@@ -323,7 +382,7 @@ export function createApp({
       });
       const allFields = fieldGroups.flat();
       application.fields = allFields;
-      const uploaded = await uploadedDocuments(application, readPdf);
+      const uploaded = await uploadedDocuments(application, readPdf, fileStorage);
       application.findings = [
         ...checkRequirements(uploaded, requirements),
         ...checkRequiredFields(allFields, requirements),

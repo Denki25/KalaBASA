@@ -25,7 +25,8 @@ export async function readPdfPages(file) {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ").trim();
+    // FIX 1: Add .replace(/\s+/g, " ") to collapse spaces, tabs, and non-breaking spaces in standard PDFs
+    const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ").replace(/\s+/g, " ").trim();
     pages.push(text);
     if (isSparse(text)) sparsePages.push({ pageNumber, page });
   }
@@ -39,7 +40,8 @@ export async function readPdfPages(file) {
     for (const { pageNumber, page } of sparsePages) {
       const image = await renderPage(page);
       const result = await worker.recognize(image);
-      pages[pageNumber - 1] = result.data.text.trim();
+      // FIX 2: Add .replace(/\s+/g, " ") to collapse spaces in scanned/OCR PDFs
+      pages[pageNumber - 1] = result.data.text.replace(/\s+/g, " ").trim();
     }
   } finally {
     await worker.terminate();

@@ -2,6 +2,35 @@ import { useEffect, useMemo, useState } from "react";
 import logo from "../../design/splash/KalaBASA (4).png";
 
 const MOCK_MODE = import.meta.env.MOCK_MODE === true;
+
+// ---- Login session (kept only for this browser tab) ----
+const SESSION_KEY = "kalabasa-session";
+
+function readSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? "null");
+    return saved?.token && saved?.user ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+// Like fetch(), but sends the login token. If the server says the token is no good, sign out.
+async function apiFetch(url, options = {}) {
+  const session = readSession();
+  const headers = new Headers(options.headers ?? {});
+  if (session) headers.set("Authorization", `Bearer ${session.token}`);
+  const response = await window.fetch(url, { ...options, headers });
+  if (response.status === 401 && session) {
+    clearSession();
+    window.location.reload();
+  }
+  return response;
+}
 const DEFAULT_FIXTURE = "set_05_demo_story";
 const FIXTURES = [
   ["set_01_clean", "Clean application"],
@@ -95,7 +124,7 @@ function BottomNavigation({ active, onHome, onApplications, onScan }) {
   );
 }
 
-function HomeScreen({ onUpload, onOpenApplication }) {
+function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
   const [applications, setApplications] = useState([]);
   const [activity, setActivity] = useState([]);
   const [stats, setStats] = useState({ pending: 0, processed_today: 0, flagged: 0 });
@@ -106,15 +135,15 @@ function HomeScreen({ onUpload, onOpenApplication }) {
   useEffect(() => {
     let active = true;
     Promise.all([
-      fetch("/api/applications").then((response) => {
+      apiFetch("/api/applications").then((response) => {
         if (!response.ok) throw new Error("Could not load applications.");
         return response.json();
       }),
-      fetch("/api/activity?limit=10").then((response) => {
+      apiFetch("/api/activity?limit=10").then((response) => {
         if (!response.ok) throw new Error("Could not load recent activity.");
         return response.json();
       }),
-      fetch("/api/stats").then((response) => {
+      apiFetch("/api/stats").then((response) => {
         if (!response.ok) throw new Error("Could not load dashboard stats.");
         return response.json();
       }),
@@ -140,6 +169,12 @@ function HomeScreen({ onUpload, onOpenApplication }) {
       <header className="home-header">
         <img className="home-logo" src={logo} alt="KalaBASA" />
         {MOCK_MODE && <span className="home-demo-badge"><i />Demo mode / mocked data</span>}
+        {user && (
+          <span className="home-user">
+            <span>{user.full_name} · {user.role}</span>
+            <button className="signout-link" type="button" onClick={onSignOut}>Sign out</button>
+          </span>
+        )}
       </header>
 
       <section className="home-welcome">
@@ -230,7 +265,11 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [splashStatus, setSplashStatus] = useState("loading");
   const [retryAttempt, setRetryAttempt] = useState(0);
-  const [demoSignedIn, setDemoSignedIn] = useState(() => sessionStorage.getItem("kalabasa-demo-signed-in") === "true");
+  const [session, setSession] = useState(() => readSession());
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [forgotMessage, setForgotMessage] = useState(false);
   const [showFindingDetailMobile, setShowFindingDetailMobile] = useState(false);
@@ -257,7 +296,7 @@ function App() {
 
     async function checkServer() {
       try {
-        const response = await fetch("/api/lgus/bagong-dalisay-demo/requirements", { signal: controller.signal });
+        const response = await apiFetch("/api/lgus/bagong-dalisay-demo/requirements", { signal: controller.signal });
         if (!response.ok) throw new Error("Requirements check failed.");
         const data = await response.json();
         const remaining = Math.max(0, 1500 - (Date.now() - startedAt));
@@ -285,7 +324,7 @@ function App() {
   useEffect(() => {
     if (!MOCK_MODE) return undefined;
     let active = true;
-    fetch(`/api/applications/app-${DEFAULT_FIXTURE}`)
+    apiFetch(`/api/applications/app-${DEFAULT_FIXTURE}`)
       .then(async (response) => {
         if (!response.ok) throw new Error((await response.json()).error ?? "Could not load demo application.");
         return response.json();
@@ -305,7 +344,7 @@ function App() {
   useEffect(() => {
     if (screen !== "Upload") return undefined;
     let active = true;
-    fetch("/api/applications")
+    apiFetch("/api/applications")
       .then((response) => {
         if (!response.ok) throw new Error("Could not load pending applications.");
         return response.json();
@@ -339,7 +378,7 @@ function App() {
     }
     let active = true;
     const action = application.status === "approved" ? "application_approved" : "application_returned";
-    fetch("/api/activity?limit=100")
+    apiFetch("/api/activity?limit=100")
       .then((response) => response.ok ? response.json() : [])
       .then((items) => {
         if (!active) return;
@@ -351,7 +390,7 @@ function App() {
   }, [application?.id, application?.status]);
 
   async function request(url, options = {}) {
-    const response = await fetch(url, options);
+    const response = await apiFetch(url, options);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "The request could not be completed.");
     return data;
@@ -510,9 +549,35 @@ function App() {
   const submittedRequiredCount = requiredDocuments.filter((item) => uploaded.has(item.document)).length;
   const requiredCompletion = requiredDocuments.length ? Math.round((submittedRequiredCount / requiredDocuments.length) * 100) : 0;
 
-  function signInForDemo() {
-    sessionStorage.setItem("kalabasa-demo-signed-in", "true");
-    setDemoSignedIn(true);
+  async function signIn(event) {
+    event.preventDefault();
+    setLoginError("");
+    if (!loginEmail.trim() || !loginPassword) {
+      setLoginError("Enter your email and password.");
+      return;
+    }
+    setLoginBusy(true);
+    try {
+      const response = await window.fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error ?? "Could not sign in. Please try again.");
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token: data.token, user: data.user }));
+      setLoginPassword("");
+      setSession({ token: data.token, user: data.user });
+    } catch (cause) {
+      setLoginError(cause.message);
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  function signOut() {
+    clearSession();
+    window.location.reload();
   }
 
   if (splashStatus !== "ready") {
@@ -545,7 +610,7 @@ function App() {
     );
   }
 
-  if (!demoSignedIn) {
+  if (!session) {
     return (
       <main className="login-screen">
         <div className="login-decoration login-decoration-top" aria-hidden="true" />
@@ -561,39 +626,36 @@ function App() {
             <p>Sign in to continue reviewing business permit applications.</p>
           </div>
 
-          <form className="login-form" noValidate onSubmit={(event) => { event.preventDefault(); signInForDemo(); }}>
+          <form className="login-form" noValidate onSubmit={signIn}>
             <label className="login-field">
               <span>Email</span>
-              <input type="email" name="email" autoComplete="email" />
+              <input type="email" name="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} />
             </label>
             <label className="login-field">
               <span>Password</span>
               <span className="login-password-input">
-                <input type={showPassword ? "text" : "password"} name="password" autoComplete="current-password" />
+                <input type={showPassword ? "text" : "password"} name="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
                 <button className="password-toggle" type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((visible) => !visible)}>
                   {showPassword ? "Hide" : "Show"}
                 </button>
               </span>
             </label>
             <div className="login-options">
-              <label className="remember-option"><input type="checkbox" name="remember" /> <span>Remember me</span></label>
               <a href="#forgot-password" onClick={(event) => { event.preventDefault(); setForgotMessage(true); }}>Forgot password?</a>
             </div>
-            {forgotMessage && <p className="forgot-message" role="status">Not available in the demo.</p>}
-            <button className="login-submit" type="submit">Sign In</button>
+            {forgotMessage && <p className="forgot-message" role="status">Ask your system administrator to reset your password.</p>}
+            {loginError && <p className="login-error" role="alert">{loginError}</p>}
+            <button className="login-submit" type="submit" disabled={loginBusy}>{loginBusy ? "Signing in..." : "Sign In"}</button>
           </form>
 
-          <div className="login-divider"><span>or</span></div>
-          <button className="login-lgu" type="button" onClick={signInForDemo}>Sign in with LGU Account</button>
           <p className="login-help">Need help? Contact your system administrator.</p>
-          <p className="demo-login-note">Demo - no real login</p>
         </section>
       </main>
     );
   }
 
   if (screen === "Home") {
-    return <HomeScreen onUpload={() => setScreen("Upload")} onOpenApplication={openApplication} />;
+    return <HomeScreen onUpload={() => setScreen("Upload")} onOpenApplication={openApplication} user={session.user} onSignOut={signOut} />;
   }
 
   return (
