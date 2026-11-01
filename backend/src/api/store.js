@@ -23,6 +23,7 @@ export class MemoryStore {
   async list() {
     return [...this.applications.values()].map((application) => ({
       id: application.id,
+      lgu_id: application.lgu_id,
       label: application.label,
       status: application.status,
       created_at: application.created_at,
@@ -77,7 +78,7 @@ export class SupabaseStore extends MemoryStore {
   }
 
   async list() {
-    const rows = assertSupabase(await this.client.from("applications").select("id,label,status,created_at"));
+    const rows = assertSupabase(await this.client.from("applications").select("id,lgu_id,label,status,created_at"));
     const findings = assertSupabase(await this.client.from("findings").select("application_id,status"));
     const counts = new Map();
     for (const finding of findings) {
@@ -120,8 +121,15 @@ export class SupabaseStore extends MemoryStore {
     const documentRows = parsed.documents.map((item) => ({ application_id: parsed.id, ...item }));
     const fieldRows = parsed.fields.map((item) => ({ application_id: parsed.id, ...item }));
     const findingRows = parsed.findings.map((item) => ({ application_id: parsed.id, ...item }));
+    const conflictColumns = {
+      documents: "application_id,document",
+      fields: "application_id,document,field",
+      findings: "application_id,finding_id",
+    };
     for (const [table, rows] of [["documents", documentRows], ["fields", fieldRows], ["findings", findingRows]]) {
-      if (rows.length) assertSupabase(await this.client.from(table).upsert(rows));
+      if (rows.length) {
+        assertSupabase(await this.client.from(table).upsert(rows, { onConflict: conflictColumns[table] }));
+      }
     }
 
     return super.save(parsed);

@@ -34,7 +34,7 @@ const SYSTEM = `You extract fields from Philippine business-permit supporting do
 
 Rules:
 1. Reply with ONE JSON object and nothing else (no markdown, no commentary).
-2. "value" must be copied exactly as printed. Do not reformat, reorder names, expand abbreviations, fix spelling or change capitalisation. Only for execution_date and notarization_date, write the date as "Month D, YYYY" because it is printed inside a sentence.
+2. "value" must be copied exactly as printed. Do not reformat, reorder names, expand abbreviations, fix spelling or change capitalisation. Copy dates exactly as printed; only execution_date and notarization_date become "Month D, YYYY".
 3. "source_text" is the shortest exact snippet from the page text that contains the value. Copy it character for character.
 4. If a field is missing or left blank, set "value" to null. If the blank is printed (for example "this ____ day of ______"), put that printed snippet in "source_text"; otherwise null. NEVER guess, infer, or fill from another field or document.
 5. "page" is the page number (from the === PAGE n === markers) where the snippet appears.
