@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { cacheKey, createLlmClient, extractDocumentCached, seededCacheFile } from "./cache.js";
+import { cacheKey, createLlmClient, extractDocumentCached, getLlmConfig, seededCacheFile } from "./cache.js";
 
 test("live extraction skips seeded answers and writes only its live response file", async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "kalabasa-live-test-"));
@@ -110,6 +110,19 @@ test("extraction cache keys separate providers and models", () => {
     cacheKey({ ...input, provider: "openai-compatible", model: "model-a" }),
     cacheKey({ ...input, provider: "openai-compatible", model: "model-b" }),
   );
+});
+
+test("OpenAI-compatible models are selected only when their provider is configured", () => {
+  const config = getLlmConfig({
+    LLM_PROVIDER: "openai-compatible",
+    LLM_BASE_URL: "https://provider.invalid/v1",
+    LLM_API_KEY: "fake-key",
+    LLM_MODEL: "gemini-3.1-flash-lite",
+  });
+  assert.equal(config.provider, "openai-compatible");
+  assert.equal(config.model, "gemini-3.1-flash-lite");
+  assert.equal(config.baseUrl, "https://provider.invalid/v1");
+  assert.equal(config.apiKey, "fake-key");
 });
 
 test("invalid model JSON is retried once and then fails clearly", async () => {

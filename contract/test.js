@@ -3,7 +3,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { ExtractedField, ExtractedFieldCore, Evidence, FindingCore, Application, nextOutcome } from "./schemas.js";
-import { verifyField, buildPrompt } from "./extraction.js";
+import { verifyField, buildPrompt, extractDocument } from "./extraction.js";
 
 const root = process.argv[2] || "../kalabasa_sample_data";
 let n = 0;
@@ -62,4 +62,43 @@ console.log("ok: nextOutcome");
 
 const p = buildPrompt("lease_contract", ["page one", "page two"]);
 assert.ok(p.user.includes("notarization_date") && p.user.includes("=== PAGE 2 ==="));
+assert.ok(p.system.includes('"Oct. 6, 2026" stays "Oct. 6, 2026"'));
 console.log("ok: buildPrompt");
+
+const normalizedFields = await extractDocument({
+  document: "community_tax_certificate",
+  pages: ["NAME DELA CRUZ, JUAN CARLOS DATE ISSUED Jan. 12, 2026"],
+  client: {
+    messages: {
+      async create() {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              fields: [
+                {
+                  field: "owner_name",
+                  value: "DELA CRUZ, JUAN   CARLOS",
+                  page: 1,
+                  source_text: "DELA CRUZ, JUAN   CARLOS",
+                  confidence: "high",
+                },
+                {
+                  field: "issue_date",
+                  value: "January 12, 2026",
+                  page: 1,
+                  source_text: "Jan.   12,   2026",
+                  confidence: "high",
+                },
+              ],
+            }),
+          }],
+        };
+      },
+    },
+  },
+});
+assert.equal(normalizedFields.find((field) => field.field === "owner_name").value, "DELA CRUZ, JUAN CARLOS");
+assert.equal(normalizedFields.find((field) => field.field === "issue_date").value, "Jan. 12, 2026");
+assert.equal(normalizedFields.find((field) => field.field === "issue_date").verified, true);
+console.log("ok: normalized model whitespace and preserved exact printed dates");

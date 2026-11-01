@@ -25,8 +25,10 @@ Person C: build the screens from `fixtures/set_05_demo_story.json` (2 findings) 
 ## Decisions the team must confirm
 1. **Outcome rules** (`nextOutcome`): any finding still open or escalated locks the decision; any confirmed finding means "return for correction"; all dismissed (or none) unlocks Approve.
 2. `verified` and `match` are computed in code. The LLM never marks its own answer as verified. Show unverified fields to the reviewer with a warning.
-3. `value` is copied as printed (no normalising). Normalising is the rules engine's job, using `normalization` in `lgu_requirements.json`.
+3. `value` preserves printed wording, order, abbreviations, and capitalization; only whitespace is collapsed to match canonical PDF/OCR text. Value normalization for comparisons is the rules engine's job, using `normalization` in `lgu_requirements.json`.
 4. A field the document does not contain has `value: null`. Null is never guessed from another document.
+
+The PDF/OCR text and model-returned values and quotes collapse repeated whitespace to single spaces. For ordinary date fields, if the model's date-only quote exactly appears on the cited page, the returned value uses that quote verbatim; only `execution_date` and `notarization_date` use normalized dates.
 
 ## Extraction
 `extraction.js` exports `extractDocument({ document, pages, method })`. `pages` is one string per page, from the PDF text layer, or from OCR when the text layer is empty. Set `ANTHROPIC_API_KEY`; model via `KALABASA_MODEL`. It has not been run against the live API yet. Test it on set 05 first: `notarization_date` must be `null`, and `business_address` must come from the premises, not the owner's home address.

@@ -34,7 +34,7 @@ const SYSTEM = `You extract fields from Philippine business-permit supporting do
 
 Rules:
 1. Reply with ONE JSON object and nothing else (no markdown, no commentary).
-2. "value" must be copied exactly as printed. Do not reformat, reorder names, expand abbreviations, fix spelling or change capitalisation. Copy dates exactly as printed; only execution_date and notarization_date become "Month D, YYYY".
+2. "value" must be copied exactly as printed. Do not reformat, reorder names, expand abbreviations, fix spelling or change capitalisation. Preserve printed date formats too: "Oct. 6, 2026" stays "Oct. 6, 2026", and "09 October 2026" stays "09 October 2026". Only execution_date and notarization_date become "Month D, YYYY".
 3. "source_text" is the shortest exact snippet from the page text that contains the value. Copy it character for character.
 4. If a field is missing or left blank, set "value" to null. If the blank is printed (for example "this ____ day of ______"), put that printed snippet in "source_text"; otherwise null. NEVER guess, infer, or fill from another field or document.
 5. "page" is the page number (from the === PAGE n === markers) where the snippet appears.
@@ -87,6 +87,26 @@ export function verifyField({ field, value, source_text, page }, pages) {
 }
 
 const stripFences = (t) => t.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+const collapseWhitespace = (value) => typeof value === "string" ? value.replace(/\s+/g, " ").trim() : value;
+const printedDateFields = new Set([
+  "application_date",
+  "registration_date",
+  "expiry_date",
+  "issue_date",
+  "valid_until",
+  "lease_start",
+  "lease_end",
+]);
+const monthName = "(?:Jan(?:uary)?\\.?|Feb(?:ruary)?\\.?|Mar(?:ch)?\\.?|Apr(?:il)?\\.?|May|Jun(?:e)?\\.?|Jul(?:y)?\\.?|Aug(?:ust)?\\.?|Sep(?:t(?:ember)?)?\\.?|Oct(?:ober)?\\.?|Nov(?:ember)?\\.?|Dec(?:ember)?\\.?)";
+const printedDate = new RegExp(`^(?:${monthName}\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4}|\\d{1,2}(?:st|nd|rd|th)?\\s+${monthName}\\s+\\d{4})$`, "i");
+
+function preservePrintedDate(field, pages) {
+  if (!printedDateFields.has(field.field) || field.value === null || !field.source_text) return field.value;
+  const source = collapseWhitespace(field.source_text);
+  const pageText = pages[field.page - 1];
+  if (!printedDate.test(source) || !pageText || !collapseWhitespace(pageText).includes(source)) return field.value;
+  return source;
+}
 
 // pages: string[] (one string per page). method: "text_layer" | "ocr".
 export async function extractDocument({ document, pages, method = "text_layer", client = new Anthropic(), model = DEFAULT_MODEL }) {
@@ -96,7 +116,17 @@ export async function extractDocument({ document, pages, method = "text_layer", 
     try {
       const res = await client.messages.create({ model, max_tokens: 2000, system, messages: [{ role: "user", content: user }] });
       const text = res.content.filter((b) => b.type === "text").map((b) => b.text).join("");
-      parsed = LlmOutput.parse(JSON.parse(stripFences(text)));
+      const output = LlmOutput.parse(JSON.parse(stripFences(text)));
+      parsed = {
+        fields: output.fields.map((field) => {
+          const normalized = {
+            ...field,
+            value: collapseWhitespace(field.value),
+            source_text: collapseWhitespace(field.source_text),
+          };
+          return { ...normalized, value: preservePrintedDate(normalized, pages) };
+        }),
+      };
     } catch (e) { lastErr = e; }
   }
   if (!parsed) throw new Error(`Extraction failed for ${document}: ${lastErr?.message}`);
