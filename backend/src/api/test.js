@@ -194,7 +194,7 @@ test("processing limits extraction concurrency and returns provider/model header
     const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
     assert.equal(response.status, 202);
     assert.equal(maxActive, 2);
-    assert.equal(response.headers.get("x-llm-provider"), "anthropic");
+    assert.equal(response.headers.get("x-llm-provider"), process.env.LLM_PROVIDER || "anthropic");
     assert.ok(response.headers.get("x-llm-model"));
     const processed = await response.json();
     assert.deepEqual([...new Set(processed.fields.map((field) => field.document))], application.documents.map((item) => item.document));

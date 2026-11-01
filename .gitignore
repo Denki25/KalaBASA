@@ -4,3 +4,5 @@ dist/
 backend/.cache/tesseract/
 backend/.cache/uploads/
 backend/.cache/live-responses.json
+backend/.cache/evaluation-report.md
+backend/.cache/evaluation-report.json

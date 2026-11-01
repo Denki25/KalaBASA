@@ -261,6 +261,8 @@ function App() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [draggingDocument, setDraggingDocument] = useState(null);
   const [reviewerNote, setReviewerNote] = useState("");
+  const [findingUpdating, setFindingUpdating] = useState("");
+  const [findingUpdateMessage, setFindingUpdateMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [splashStatus, setSplashStatus] = useState("loading");
@@ -399,6 +401,7 @@ function App() {
   async function processApplication(id) {
     const processed = await request(`/api/applications/${id}/process`, { method: "POST" });
     setApplication(processed);
+    setFindingUpdateMessage("");
     setSelectedFindingId(processed.findings[0]?.finding_id ?? null);
     setScreen("Findings");
   }
@@ -489,6 +492,8 @@ function App() {
       return;
     }
     setNoteError("");
+    setFindingUpdateMessage("");
+    setFindingUpdating(status);
     setBusy(true);
     setError("");
     try {
@@ -497,13 +502,28 @@ function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status, reviewer_note: reviewerNote }),
       });
-      setApplication((current) => ({
-        ...current,
-        findings: current.findings.map((finding) => finding.finding_id === updated.finding_id ? updated : finding),
-      }));
+      const nextFindings = application.findings.map((finding) => finding.finding_id === updated.finding_id ? updated : finding);
+      setApplication((current) => ({ ...current, findings: nextFindings }));
+      const unresolved = nextFindings.filter((finding) => ["open", "escalated"].includes(finding.status));
+      const actionLabel = status.charAt(0).toUpperCase() + status.slice(1);
+      if (unresolved.length === 0) {
+        setFindingUpdateMessage(`${actionLabel} saved. All findings are reviewed. Opening the decision.`);
+        setShowFindingDetailMobile(false);
+        setScreen("Outcome");
+      } else {
+        const nextFinding = unresolved.find((finding) => finding.finding_id !== updated.finding_id);
+        if (nextFinding) {
+          setSelectedFindingId(nextFinding.finding_id);
+          setShowFindingDetailMobile(true);
+          setFindingUpdateMessage(`${actionLabel} saved. ${unresolved.length} finding${unresolved.length === 1 ? "" : "s"} still need review.`);
+        } else {
+          setFindingUpdateMessage("Finding escalated. Resolve it before making a final decision.");
+        }
+      }
     } catch (cause) {
       setError(cause.message);
     } finally {
+      setFindingUpdating("");
       setBusy(false);
     }
   }
@@ -531,6 +551,7 @@ function App() {
     try {
       const selected = await request(`/api/applications/${id}`);
       setApplication(selected);
+      setFindingUpdateMessage("");
       setSelectedFindingId(selected.findings[0]?.finding_id ?? null);
       setShowFindingDetailMobile(false);
       setScreen("Findings");
@@ -754,6 +775,7 @@ function App() {
           </div>}
 
           {error && <div className="error-banner" role="alert">{error}</div>}
+          {findingUpdateMessage && <div className="finding-update-message" role="status">{findingUpdateMessage}</div>}
 
           {screen === "Upload" && (
             <section className="card upload-card">
@@ -896,7 +918,7 @@ function App() {
                   <button
                     className={`finding-item ${selectedFinding?.finding_id === finding.finding_id ? "selected" : ""}`}
                     key={finding.finding_id}
-                    onClick={() => { setSelectedFindingId(finding.finding_id); setShowFindingDetailMobile(true); }}
+                    onClick={() => { setSelectedFindingId(finding.finding_id); setShowFindingDetailMobile(true); setFindingUpdateMessage(""); }}
                   >
                     <span className={`finding-indicator ${finding.status}`} />
                     <span className="finding-summary">
@@ -909,7 +931,7 @@ function App() {
               </section>
 
               {selectedFinding && <section className="card finding-detail">
-                <button className="mobile-finding-back" type="button" onClick={() => setShowFindingDetailMobile(false)}>← Back to findings</button>
+                <button className="mobile-finding-back" type="button" onClick={() => { setShowFindingDetailMobile(false); setFindingUpdateMessage(""); }}>← <span>Back to findings</span></button>
                 <div className="detail-eyebrow">{selectedFinding.rule_id} <span>·</span> {selectedFinding.type.replaceAll("_", " ")}</div>
                 <h2>{selectedFinding.field.replaceAll("_", " ")}</h2>
                 <p className="detail-message">{selectedFinding.message}</p>
@@ -941,9 +963,9 @@ function App() {
                 </label>
                 {noteError && <p className="note-error" role="alert">{noteError}</p>}
                 <div className="review-actions">
-                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("confirmed")}>Confirm</button>
-                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("dismissed")}>Dismiss</button>
-                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("escalated")}>Escalate</button>
+                  <button className="outline-button" disabled={busy || finalDecision} aria-busy={findingUpdating === "confirmed"} onClick={() => updateFinding("confirmed")}>{findingUpdating === "confirmed" ? "Saving…" : "Confirm"}</button>
+                  <button className="outline-button" disabled={busy || finalDecision} aria-busy={findingUpdating === "dismissed"} onClick={() => updateFinding("dismissed")}>{findingUpdating === "dismissed" ? "Saving…" : "Dismiss"}</button>
+                  <button className="outline-button" disabled={busy || finalDecision} aria-busy={findingUpdating === "escalated"} onClick={() => updateFinding("escalated")}>{findingUpdating === "escalated" ? "Saving…" : "Escalate"}</button>
                 </div>
               </section>}
             </div>

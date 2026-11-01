@@ -524,7 +524,10 @@ mark { border-radius: 2px; background: #ffedb9; color: #594410; padding: 1px 2px
 .review-main .note-label textarea { min-height: 82px; border: 1px solid color-mix(in srgb, var(--navy) 18%, white); border-radius: 9px; }
 .review-main .note-label textarea:focus { border-color: var(--orange); box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 15%, transparent); }
 .note-error { margin: 8px 0 0; color: #a43e34; font-size: 11px; }
-.mobile-finding-back { display: none; }
+.mobile-finding-back { display: none; align-items: center; gap: 8px; min-height: 38px; margin: -3px 0 14px; padding: 0 13px; border: 1px solid color-mix(in srgb, var(--navy) 12%, white); border-radius: 999px; background: linear-gradient(180deg, white, color-mix(in srgb, var(--navy) 3%, white)); box-shadow: 0 3px 10px color-mix(in srgb, var(--navy) 9%, transparent); color: var(--navy); font-size: 10px; font-weight: 750; cursor: pointer; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+.mobile-finding-back:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--orange) 48%, white); box-shadow: 0 5px 14px color-mix(in srgb, var(--navy) 13%, transparent); }
+.mobile-finding-back:focus-visible { outline: 3px solid color-mix(in srgb, var(--orange) 44%, transparent); outline-offset: 2px; }
+.finding-update-message { margin: 0 0 12px; padding: 10px 13px; border: 1px solid color-mix(in srgb, #18845c 25%, white); border-radius: 10px; background: color-mix(in srgb, #18845c 7%, white); color: #176747; font-size: 11px; font-weight: 650; line-height: 1.45; }
 .final-decision-banner { display: flex; align-items: center; gap: 11px; margin: 0 0 16px; padding: 12px 15px; border: 1px solid color-mix(in srgb, #18845c 22%, white); border-radius: 11px; background: color-mix(in srgb, #18845c 7%, white); color: #176747; }
 .final-decision-check { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #19835b; color: white; font-size: 14px; font-weight: 800; }
 .final-decision-banner > span:last-child { display: grid; gap: 3px; }
@@ -635,7 +638,7 @@ mark { border-radius: 2px; background: #ffedb9; color: #594410; padding: 1px 2px
   .show-detail-mobile .finding-list { display: none; }
   .finding-detail { display: none; margin-top: 0; }
   .show-detail-mobile .finding-detail { display: block; }
-  .mobile-finding-back { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; margin: -3px 0 12px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--navy) 13%, white); border-radius: 18px; background: white; color: var(--navy); font-size: 10px; font-weight: 700; }
+  .mobile-finding-back { display: inline-flex; }
   .finding-counts { gap: 4px; padding-right: 10px; padding-left: 10px; }
   .finding-count { gap: 3px; font-size: 8px; }
   .finding-count strong { font-size: 12px; }

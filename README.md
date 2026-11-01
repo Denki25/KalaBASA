@@ -18,9 +18,9 @@ npm run start:api
 npm run dev
 ```
 
-Open the Vite URL printed in the frontend terminal. Demo mode lets you load the supplied sample applications without an Anthropic API key.
+Open the Vite URL printed in the frontend terminal. Demo mode lets you load the supplied sample applications without an AI provider API key.
 
-For live extraction, set `MOCK_MODE=false` and `ANTHROPIC_API_KEY` in `.env`. Supabase is enabled when both `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are provided; apply [backend/db/schema.sql](./backend/db/schema.sql) first.
+For live extraction, set `MOCK_MODE=false`, `LLM_PROVIDER=gemini`, and `GEMINI_API_KEY` in `.env`. The default model is `gemini-3.6-flash`; confirm it is available for your key in Google AI Studio. Supabase is enabled when both `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are provided; apply [backend/db/schema.sql](./backend/db/schema.sql) first.
 
 ## Tests
 

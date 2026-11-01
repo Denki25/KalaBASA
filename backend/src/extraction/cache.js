@@ -17,19 +17,24 @@ export class DailyExtractionLimitError extends Error {
 
 export function getLlmConfig(env = process.env) {
   const provider = env.LLM_PROVIDER || "anthropic";
-  if (!new Set(["anthropic", "openai-compatible"]).has(provider)) {
+  if (!new Set(["anthropic", "openai-compatible", "gemini"]).has(provider)) {
     throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
   }
   const model = provider === "openai-compatible"
     ? env.LLM_MODEL || ""
-    : env.KALABASA_MODEL || DEFAULT_MODEL;
+    : env.KALABASA_MODEL || (provider === "gemini" ? "gemini-3.6-flash" : DEFAULT_MODEL);
   return {
     provider,
     model,
-    apiKey: provider === "openai-compatible" ? env.LLM_API_KEY : env.ANTHROPIC_API_KEY,
-    baseUrl: env.LLM_BASE_URL,
+    apiKey: provider === "gemini" ? env.GEMINI_API_KEY : provider === "openai-compatible" ? env.LLM_API_KEY : env.ANTHROPIC_API_KEY,
+    baseUrl: provider === "gemini"
+      ? env.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"
+      : env.LLM_BASE_URL,
   };
 }
+
+const isOpenAiCompatible = (provider) => provider === "openai-compatible" || provider === "gemini";
+const apiKeyName = (provider) => provider === "gemini" ? "GEMINI_API_KEY" : provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
 
 export function cacheKey({ document, pages, model = DEFAULT_MODEL, provider = "anthropic" }) {
   return createHash("sha256")
@@ -47,8 +52,20 @@ function retryAfterMs(value) {
   if (!value) return null;
   const seconds = Number(value);
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const duration = String(value).trim().match(/^(\d+(?:\.\d+)?)s$/i);
+  if (duration) return Math.max(0, Number(duration[1]) * 1000);
   const date = Date.parse(value);
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+function retryDelayFromBody(body) {
+  try {
+    const payload = JSON.parse(body);
+    const retryInfo = payload?.error?.details?.find((detail) => detail["@type"]?.endsWith(".RetryInfo"));
+    return retryInfo?.retryDelay ?? payload?.error?.retryDelay ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function extractText(response) {
@@ -80,6 +97,18 @@ export function normalizeModelJson(text) {
 }
 
 const defaultSleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+let nextGeminiRequestAt = 0;
+let geminiRequestQueue = Promise.resolve();
+
+function waitForGeminiRequestSlot() {
+  const pending = geminiRequestQueue.catch(() => {}).then(async () => {
+    const waitMs = Math.max(0, nextGeminiRequestAt - Date.now());
+    if (waitMs > 0) await defaultSleep(waitMs);
+    nextGeminiRequestAt = Date.now() + 12500;
+  });
+  geminiRequestQueue = pending;
+  return pending;
+}
 
 export function createLlmClient({
   provider,
@@ -123,9 +152,9 @@ export function createLlmClient({
       },
     };
   }
-  if (provider !== "openai-compatible") throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
+  if (!isOpenAiCompatible(provider)) throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
   if (!baseUrl) throw new Error("LLM_BASE_URL is required for the openai-compatible provider.");
-  if (!apiKey) throw new Error("LLM_API_KEY is required for the openai-compatible provider.");
+  if (!apiKey) throw new Error(`${apiKeyName(provider)} is required for the ${provider} provider.`);
 
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   return {
@@ -140,22 +169,28 @@ export function createLlmClient({
         while (httpAttempts < 4) {
           await onModelCall();
           httpAttempts += 1;
+          if (provider === "gemini") await waitForGeminiRequestSlot();
+          const body = { model: request.model, max_tokens: request.max_tokens, messages };
+          if (provider === "gemini") body.response_format = { type: "json_object" };
           response = await fetchImpl(endpoint, {
             method: "POST",
             headers: {
               "content-type": "application/json",
               authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({ model: request.model, max_tokens: request.max_tokens, messages }),
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(60000),
           });
           if (response.ok) break;
+          const detail = await response.text().catch(() => "");
           const retryable = response.status === 429 || response.status >= 500;
           if (!retryable || httpAttempts === 4) {
-            const detail = await response.text().catch(() => "");
             terminalHttpError = new Error(`LLM request failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
             throw terminalHttpError;
           }
-          const delay = retryAfterMs(response.headers.get("retry-after")) ?? 250 * 2 ** (httpAttempts - 1);
+          const delay = retryAfterMs(response.headers.get("retry-after"))
+            ?? retryAfterMs(retryDelayFromBody(detail))
+            ?? 250 * 2 ** (httpAttempts - 1);
           await sleep(delay);
         }
 
@@ -234,15 +269,18 @@ export async function extractDocumentCached({
   const client = {
     messages: {
       async create(request) {
-        if (!live && !apiKey) {
-          if (!entry) {
-            const keyName = provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
-            throw new Error(`No cached extraction for ${document}; set ${keyName} to call the configured provider.`);
-          }
+        if (!live && entry) {
           return { content: [{ type: "text", text: entry.text }] };
         }
 
-        if (!apiKey) throw new Error(`${provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY"} is required for live extraction.`);
+        if (!apiKey) {
+          if (!entry) {
+            const keyName = apiKeyName(provider);
+            const reason = live ? `${keyName} is required for live extraction.` : `No cached extraction for ${document}; set ${keyName} to call the configured provider.`;
+            throw new Error(reason);
+          }
+          return { content: [{ type: "text", text: entry.text }] };
+        }
         providerClient ??= clientFactory({
           provider,
           apiKey,

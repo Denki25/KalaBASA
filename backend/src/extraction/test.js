@@ -11,7 +11,7 @@ const marker = "CACHED/SEEDED ANSWERS - NOT LIVE AI ACCURACY";
 const llm = getLlmConfig();
 
 if (live && !llm.apiKey) {
-  const keyName = llm.provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+  const keyName = llm.provider === "gemini" ? "GEMINI_API_KEY" : llm.provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
   console.error(`Cannot run live extraction: ${keyName} is not set.`);
   process.exitCode = 1;
 } else {

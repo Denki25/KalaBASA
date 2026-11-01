@@ -265,16 +265,23 @@ function parseArgs(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { extractDocumentCached } = await import("./cache.js");
+  const { extractDocumentCached, getLlmConfig } = await import("./cache.js");
   const { readPdfPages } = await import("./pdf.js");
   const args = parseArgs(process.argv.slice(2));
-  console.log(`Model: ${process.env.KALABASA_MODEL ?? "(default)"} | live AI: ${process.env.GEMINI_API_KEY ? "yes" : "NO (saved answers only)"} | pause between live calls: ${args.delayMs} ms\n`);
-  const result = await evaluate({ extract: extractDocumentCached, readPdf: readPdfPages, sets: args.sets, delayMs: args.delayMs, log: console.log });
-  const outputDirectory = path.join(repoRoot, "backend", ".cache");
-  await fs.mkdir(outputDirectory, { recursive: true });
-  const report = formatReport(result);
-  await fs.writeFile(path.join(outputDirectory, "evaluation-report.md"), report, "utf8");
-  await fs.writeFile(path.join(outputDirectory, "evaluation-report.json"), `${JSON.stringify({ summary: summarize(result), ...result }, null, 2)}\n`, "utf8");
-  console.log(`\n${report}`);
-  console.log("Saved: backend/.cache/evaluation-report.md and evaluation-report.json");
+  const llm = getLlmConfig();
+  if (!llm.apiKey) {
+    const keyName = llm.provider === "gemini" ? "GEMINI_API_KEY" : llm.provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+    console.error(`Cannot run the live accuracy evaluation: ${keyName} is not set.`);
+    process.exitCode = 1;
+  } else {
+    console.log(`Provider: ${llm.provider} | model: ${llm.model} | live AI: yes | pause between live calls: ${args.delayMs} ms\n`);
+    const result = await evaluate({ extract: extractDocumentCached, readPdf: readPdfPages, sets: args.sets, delayMs: args.delayMs, log: console.log });
+    const outputDirectory = path.join(repoRoot, "backend", ".cache");
+    await fs.mkdir(outputDirectory, { recursive: true });
+    const report = formatReport(result);
+    await fs.writeFile(path.join(outputDirectory, "evaluation-report.md"), report, "utf8");
+    await fs.writeFile(path.join(outputDirectory, "evaluation-report.json"), `${JSON.stringify({ summary: summarize(result), ...result }, null, 2)}\n`, "utf8");
+    console.log(`\n${report}`);
+    console.log("Saved: backend/.cache/evaluation-report.md and evaluation-report.json");
+  }
 }
