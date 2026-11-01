@@ -56,3 +56,40 @@ create table if not exists audit_log (
   details jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+-- Application data is accessed through the backend service role only.
+-- RLS is enabled without public/authenticated policies, and table privileges
+-- are revoked from browser roles. Existing policies cannot grant access without
+-- SQL privileges; service_role bypasses RLS in Supabase.
+alter table applications enable row level security;
+alter table documents enable row level security;
+alter table fields enable row level security;
+alter table findings enable row level security;
+alter table audit_log enable row level security;
+
+revoke all privileges on table
+  public.applications,
+  public.documents,
+  public.fields,
+  public.findings,
+  public.audit_log
+from public, anon, authenticated;
+
+grant usage on schema public to service_role;
+grant select, insert, update, delete on table
+  public.applications,
+  public.documents,
+  public.fields,
+  public.findings,
+  public.audit_log
+to service_role;
+
+-- The audit_log identity column uses this sequence. Limit access to the
+-- sequence in the same way as the table.
+revoke all privileges on sequence public.audit_log_id_seq from public, anon, authenticated;
+grant usage, select, update on sequence public.audit_log_id_seq to service_role;
+
+-- The other application_id foreign keys lead their unique indexes already:
+-- documents(application_id, document), fields(application_id, document, field),
+-- and findings(application_id, finding_id). Only audit_log needs a new index.
+create index if not exists audit_log_application_id_idx on public.audit_log (application_id);

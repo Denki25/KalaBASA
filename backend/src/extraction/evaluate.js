@@ -270,7 +270,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const args = parseArgs(process.argv.slice(2));
   const llm = getLlmConfig();
   if (!llm.apiKey) {
-    const keyName = llm.provider === "gemini" ? "GEMINI_API_KEY" : llm.provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+    const keyName = llm.provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
     console.error(`Cannot run the live accuracy evaluation: ${keyName} is not set.`);
     process.exitCode = 1;
   } else {

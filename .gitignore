@@ -6,3 +6,6 @@ backend/.cache/uploads/
 backend/.cache/live-responses.json
 backend/.cache/evaluation-report.md
 backend/.cache/evaluation-report.json
+
+# Bundled archives are kept outside the source repository
+*.zip

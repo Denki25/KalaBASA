@@ -57,9 +57,6 @@ export class SupabaseStore extends MemoryStore {
   }
 
   async get(id) {
-    const cached = await super.get(id);
-    if (cached) return cached;
-
     const row = assertSupabase(await this.client.from("applications").select("*").eq("id", id).maybeSingle());
     if (!row) return null;
     const [documents, fields, findings] = await Promise.all([
@@ -73,13 +70,16 @@ export class SupabaseStore extends MemoryStore {
       fields: assertSupabase(fields).map(({ id: _id, application_id: _appId, ...field }) => field),
       findings: assertSupabase(findings).map(({ id: _id, application_id: _appId, ...finding }) => finding),
     });
-    await super.save(app);
     return app;
   }
 
   async list() {
     const rows = assertSupabase(await this.client.from("applications").select("id,lgu_id,label,status,created_at"));
-    const findings = assertSupabase(await this.client.from("findings").select("application_id,status"));
+    if (!rows.length) return [];
+    const applicationIds = rows.map((row) => row.id);
+    const findings = assertSupabase(await this.client.from("findings")
+      .select("application_id,status")
+      .in("application_id", applicationIds));
     const counts = new Map();
     for (const finding of findings) {
       const count = counts.get(finding.application_id) ?? { open_findings: 0, total_findings: 0 };
@@ -127,6 +127,21 @@ export class SupabaseStore extends MemoryStore {
       findings: "application_id,finding_id",
     };
     for (const [table, rows] of [["documents", documentRows], ["fields", fieldRows], ["findings", findingRows]]) {
+      if (table === "fields" || table === "findings") {
+        const keyColumns = table === "fields" ? ["document", "field"] : ["finding_id"];
+        const existingRows = assertSupabase(await this.client.from(table)
+          .select(`id,${keyColumns.join(",")}`)
+          .eq("application_id", parsed.id));
+        const retainedKeys = new Set(rows.map((row) => JSON.stringify(keyColumns.map((column) => row[column]))));
+        const staleIds = existingRows
+          .filter((row) => !retainedKeys.has(JSON.stringify(keyColumns.map((column) => row[column]))))
+          .map((row) => row.id);
+        if (staleIds.length) {
+          assertSupabase(await this.client.from(table).delete()
+            .eq("application_id", parsed.id)
+            .in("id", staleIds));
+        }
+      }
       if (rows.length) {
         assertSupabase(await this.client.from(table).upsert(rows, { onConflict: conflictColumns[table] }));
       }
@@ -143,7 +158,6 @@ export class SupabaseStore extends MemoryStore {
       details: entry.details,
       created_at: entry.timestamp,
     }));
-    await super.audit(entry);
   }
 }
 

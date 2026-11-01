@@ -109,6 +109,35 @@ test("daily extraction limit returns 429 without making an over-limit model call
   }, application, options);
 });
 
+test("processing rejects applications already extracting or with a final decision", async () => {
+  const applications = ["extracting", "approved", "returned"].map((status) =>
+    Application.parse({ ...fixture, id: `cannot-process-${status}`, status }));
+  await withApi(async (baseUrl, store) => {
+    for (const application of applications) {
+      const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
+      assert.equal(response.status, 409, application.status);
+      assert.equal((await store.get(application.id)).status, application.status);
+    }
+  }, applications, { mockMode: false });
+});
+
+test("finding updates and final decisions require ready_for_review state", async () => {
+  const application = Application.parse({ ...fixture, id: "uploaded-state-is-not-reviewable", status: "uploaded" });
+  await withApi(async (baseUrl, store) => {
+    const baseUrlForApp = `${baseUrl}/api/applications/${application.id}`;
+    const update = await fetch(`${baseUrlForApp}/findings/${application.findings[0].finding_id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "confirmed" }),
+    });
+    assert.equal(update.status, 409);
+    for (const outcome of ["approve", "return"]) {
+      assert.equal((await fetch(`${baseUrlForApp}/${outcome}`, { method: "POST" })).status, 409, outcome);
+    }
+    assert.equal((await store.get(application.id)).status, "uploaded");
+  }, application);
+});
+
 test("upload rejects files larger than 20 MB with a clear 400", async () => {
   await withApi(async (baseUrl) => {
     const form = new FormData();
@@ -117,6 +146,29 @@ test("upload rejects files larger than 20 MB with a clear 400", async () => {
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error, "Each PDF must be 20 MB or smaller.");
   });
+});
+
+test("upload rejects non-PDF content even when the client names it as a PDF", async () => {
+  await withApi(async (baseUrl) => {
+    const form = new FormData();
+    form.append("files", new Blob(["not a PDF"], { type: "application/pdf" }), "fake.pdf");
+    form.append("document_types[]", "application_form");
+    const response = await fetch(`${baseUrl}/api/applications`, { method: "POST", body: form });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "Every uploaded document must be a PDF.");
+  }, fixture, { mockMode: false });
+});
+
+test("upload rejects more than the five supported document files", async () => {
+  await withApi(async (baseUrl) => {
+    const form = new FormData();
+    for (let index = 0; index < 6; index++) {
+      form.append("files", new Blob(["%PDF-1.4"], { type: "application/pdf" }), `${index}.pdf`);
+    }
+    const response = await fetch(`${baseUrl}/api/applications`, { method: "POST", body: form });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /no more than 5 PDFs/i);
+  }, fixture, { mockMode: false });
 });
 
 test("processing extracts documents in parallel in document order and can retry after failure", async () => {
@@ -154,7 +206,7 @@ test("processing extracts documents in parallel in document order and can retry 
     const processUrl = `${baseUrl}/api/applications/${application.id}/process`;
     const failed = await fetch(processUrl, { method: "POST" });
     assert.equal(failed.status, 500);
-    assert.equal((await failed.json()).error, "Temporary extraction failure.");
+    assert.equal((await failed.json()).error, "Extraction failed. Please retry; if it continues, contact support.");
     assert.equal((await store.get(application.id)).status, "uploaded");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
@@ -348,7 +400,7 @@ test("final decisions lock finding updates and all later approve or return attem
       for (const outcome of ["approve", "return"]) {
         const response = await fetch(`${base}/${outcome}`, { method: "POST" });
         assert.equal(response.status, 409);
-        assert.match((await response.json()).error, /final decision/i);
+        assert.match((await response.json()).error, /final decision|ready for review/i);
       }
     }
   }, [approved, returned]);

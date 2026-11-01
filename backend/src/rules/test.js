@@ -95,6 +95,17 @@ const numberFields = formattingFields.map((field, index) => ({
 }));
 assert.equal(compareAcrossDocuments(numberFields, requirements).length, 1, "different house numbers must mismatch");
 
+const unverifiedComparison = compareAcrossDocuments([
+  { field: "business_address", value: "45 MacArthur Highway", document: "application_form", page: 1, source_text: null, verified: false },
+  { field: "business_address", value: "54 MacArthur Highway", document: "lease_contract", page: 1, source_text: "54 MacArthur Highway", verified: true },
+], requirements);
+assert.equal(unverifiedComparison.length, 1, "unverified extracted values must not produce a mismatch comparison");
+assert.equal(unverifiedComparison[0].type, "missing_field");
+assert.equal(unverifiedComparison[0].severity, "low");
+assert.match(unverifiedComparison[0].message, /could not be verified/);
+assert.equal(unverifiedComparison[0].evidence[0].source_text, null);
+assert.ok(unverifiedComparison[0].evidence[0].note);
+
 const ownerAddressFields = [
   { field: "owner_residence_address", value: "10 Luna St", document: "application_form", page: 1, source_text: "10 Luna St" },
   { field: "owner_residence_address", value: "11 Luna St", document: "community_tax_certificate", page: 1, source_text: "11 Luna St" },

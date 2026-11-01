@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
   "workspaces": [
     "contract",
     "backend",
@@ -10,21 +13,21 @@
   ],
 
   "scripts": {
-    "test:extraction": "node --env-file=.env backend/src/extraction/test.js && node --env-file=.env backend/src/extraction/cache.test.js",
-    "test:extraction:live": "node --env-file=.env backend/src/extraction/test.js --live",
-    "test:ocr": "node --env-file=.env backend/src/extraction/ocr-test.js",
-    "test:rules": "node --env-file=.env backend/src/rules/test.js",
-    "test:api": "node --env-file=.env --test backend/src/api/test.js",
-    "test:auth": "node --env-file=.env --test backend/src/api/auth-test.js",
-    "test:storage": "node --env-file=.env --test backend/src/api/documents-test.js",
-    "test:evaluator": "node --env-file=.env --test backend/src/extraction/evaluate-test.js",
-    "evaluate": "node --env-file=.env backend/src/extraction/evaluate.js",
-    "test:contract": "node --env-file=.env contract/test.js ./samples",
-    "seed:sample-cache": "node --env-file=.env backend/src/extraction/seed-sample-cache.js",
-    "start": "node --env-file=.env backend/src/api/server.js",
-    "start:api": "node --env-file=.env backend/src/api/server.js",
+    "test:extraction": "node --env-file-if-exists=.env backend/src/extraction/test.js && node --env-file-if-exists=.env backend/src/extraction/cache.test.js",
+    "test:extraction:live": "node --env-file-if-exists=.env backend/src/extraction/test.js --live",
+    "test:ocr": "node --env-file-if-exists=.env backend/src/extraction/ocr-test.js",
+    "test:rules": "node --env-file-if-exists=.env backend/src/rules/test.js",
+    "test:api": "node --env-file-if-exists=.env --test backend/src/api/test.js",
+    "test:auth": "node --env-file-if-exists=.env --test backend/src/api/auth-test.js",
+    "test:storage": "node --env-file-if-exists=.env --test backend/src/api/documents-test.js",
+    "test:evaluator": "node --env-file-if-exists=.env --test backend/src/extraction/evaluate-test.js",
+    "evaluate": "node --env-file-if-exists=.env backend/src/extraction/evaluate.js",
+    "test:contract": "node --env-file-if-exists=.env contract/test.js ./samples",
+    "seed:sample-cache": "node --env-file-if-exists=.env backend/src/extraction/seed-sample-cache.js",
+    "start": "node --env-file-if-exists=.env backend/src/api/server.js",
+    "start:api": "node --env-file-if-exists=.env backend/src/api/server.js",
     "dev": "npm --workspace frontend run dev",
     "build": "npm --workspace frontend run build",
-    "extract": "node --env-file=.env backend/src/extraction/run.js"
+    "extract": "node --env-file-if-exists=.env backend/src/extraction/run.js"
   }
 }

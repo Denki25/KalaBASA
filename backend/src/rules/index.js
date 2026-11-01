@@ -159,22 +159,43 @@ function sameValue(field, left, right, requirements) {
 }
 
 function evidenceFor(field) {
-  if (!field.source_text?.trim() || !Number.isInteger(field.page) || field.page < 1) {
-    throw new Error(`Cannot compare ${field.document}.${field.field}: page and source_text are required as evidence.`);
-  }
-  return { document: field.document, page: field.page, source_text: field.source_text };
+  const evidence = {
+    document: field.document,
+    page: Number.isInteger(field.page) && field.page > 0 ? field.page : 1,
+    source_text: field.source_text?.trim() ? field.source_text : null,
+  };
+  if (!field.source_text?.trim()) evidence.note = "The extracted value could not be verified because no source text was available.";
+  else if (field.verified === false) evidence.note = "The extracted value could not be verified against the quoted source text.";
+  return evidence;
 }
 
 export function compareAcrossDocuments(fields, requirements) {
   const findings = [];
   const blockedFields = new Set(requirements.do_not_compare ?? []);
+  const reportedUnverified = new Set();
 
   for (const check of requirements.cross_document_checks) {
     if (blockedFields.has(check.field) || check.field === "owner_residence_address") continue;
-    const values = fields.filter((item) =>
+    const applicable = fields.filter((item) =>
       item.field === check.field
       && check.documents.includes(item.document)
       && !blank(item.value));
+    for (const item of applicable) {
+      if (item.verified !== false && item.source_text?.trim()) continue;
+      const key = `${item.document}:${item.field}`;
+      if (reportedUnverified.has(key)) continue;
+      reportedUnverified.add(key);
+      findings.push(makeFinding({
+        finding_id: `${check.rule_id}-UNVERIFIED-${item.document}-${item.field}`,
+        type: "missing_field",
+        severity: "low",
+        rule_id: `${check.rule_id}-UNVERIFIED`,
+        field: item.field,
+        message: `The extracted ${item.field.replaceAll("_", " ")} in ${item.document.replaceAll("_", " ")} could not be verified in the source. Cross-document comparison was skipped for this value.`,
+        evidence: [evidenceFor(item)],
+      }));
+    }
+    const values = applicable.filter((item) => item.verified !== false && item.source_text?.trim());
     if (values.length < 2) continue;
 
     const groups = [];

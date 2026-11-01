@@ -40,6 +40,30 @@ test("live extraction skips seeded answers and writes only its live response fil
   }
 });
 
+test("normal provider calls keep generated responses out of the checked-in sample cache", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "kalabasa-runtime-cache-test-"));
+  const liveFile = path.join(temp, "live-responses.json");
+  const seededBefore = await fs.readFile(seededCacheFile, "utf8");
+  try {
+    await extractDocumentCached({
+      document: "dti_certificate",
+      pages: ["unique runtime cache test document content 2026"],
+      method: "text_layer",
+      apiKey: "fake-key",
+      cacheFile: seededCacheFile,
+      liveFile,
+      readCacheFile: async () => ({}),
+      clientFactory: () => ({
+        messages: { async create() { return { content: [{ type: "text", text: JSON.stringify({ fields: [] }) }] }; } },
+      }),
+    });
+    assert.equal(await fs.readFile(seededCacheFile, "utf8"), seededBefore);
+    assert.equal(Object.keys(JSON.parse(await fs.readFile(liveFile, "utf8"))).length, 1);
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("parallel cached extractions preserve every response entry", async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "kalabasa-cache-race-test-"));
   const cacheFile = path.join(temp, "extraction-responses.json");
@@ -51,6 +75,8 @@ test("parallel cached extractions preserve every response entry", async () => {
   try {
     await Promise.all(documents.map((input) => extractDocumentCached({
       ...input,
+      provider: "anthropic",
+      model: "parallel-test-model",
       cacheFile,
       apiKey: "fake-key",
       clientFactory: ({ onModelCall }) => ({
@@ -62,7 +88,9 @@ test("parallel cached extractions preserve every response entry", async () => {
     })));
     const entries = JSON.parse(await fs.readFile(cacheFile, "utf8"));
     assert.equal(Object.keys(entries).length, documents.length);
-    for (const input of documents) assert.equal(entries[cacheKey(input)]?.document, input.document);
+    for (const input of documents) {
+      assert.equal(entries[cacheKey({ ...input, provider: "anthropic", model: "parallel-test-model" })]?.document, input.document);
+    }
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -117,10 +145,10 @@ test("OpenAI-compatible models are selected only when their provider is configur
     LLM_PROVIDER: "openai-compatible",
     LLM_BASE_URL: "https://provider.invalid/v1",
     LLM_API_KEY: "fake-key",
-    LLM_MODEL: "gemini-3.1-flash-lite",
+    LLM_MODEL: "example-compatible-model",
   });
   assert.equal(config.provider, "openai-compatible");
-  assert.equal(config.model, "gemini-3.1-flash-lite");
+  assert.equal(config.model, "example-compatible-model");
   assert.equal(config.baseUrl, "https://provider.invalid/v1");
   assert.equal(config.apiKey, "fake-key");
 });

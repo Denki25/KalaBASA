@@ -85,11 +85,11 @@ test("mistakes are counted and cause false alarms or missed findings", async () 
 
 test("a crashed extraction is reported and not counted as an AI mistake", async () => {
   const { readPdf, extract } = makeHarness(({ set, document, phase }) =>
-    phase === "document" && set === "set_01_clean" && document === "lease_contract" ? { throw: "Gemini request failed (429)" } : null);
+    phase === "document" && set === "set_01_clean" && document === "lease_contract" ? { throw: "Provider request failed (429)" } : null);
   const result = await evaluate({ samplesRoot, readPdf, extract, sets: ["set_01_clean"] });
   const summary = summarize(result);
   assert.equal(summary.documents_failed, 1);
   assert.equal(result.sets[0].extraction_failed[0], "lease_contract");
   assert.ok(result.sets[0].fields.every((field) => field.document !== "lease_contract"));
-  assert.match(formatReport(result), /Gemini request failed/);
+  assert.match(formatReport(result), /Provider request failed/);
 });

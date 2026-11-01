@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import logo from "../../design/splash/KalaBASA (4).png";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { nextOutcome } from "kalabasa-contract/schemas.js";
+import logo from "./assets/logo.png";
 
 const MOCK_MODE = import.meta.env.MOCK_MODE === true;
 
@@ -32,6 +33,7 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 const DEFAULT_FIXTURE = "set_05_demo_story";
+const DEFAULT_LGU_ID = "bagong-dalisay-demo";
 const FIXTURES = [
   ["set_01_clean", "Clean application"],
   ["set_02_address_mismatch", "Address mismatch"],
@@ -48,13 +50,6 @@ const DOCUMENTS = [
 ];
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const SCREENS = ["Upload", "Requirements", "Extracted Fields", "Findings", "Outcome"];
-
-function outcomeFor(application) {
-  const statuses = application?.findings.map((finding) => finding.status) ?? [];
-  if (statuses.some((status) => status === "open" || status === "escalated")) return "locked";
-  if (statuses.includes("confirmed")) return "return";
-  return "approve";
-}
 
 function textWithHighlight(text, target) {
   if (!target) return text;
@@ -86,11 +81,10 @@ function formattedDecisionTime(value) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function greetingForNow() {
+function greetingForNow(name) {
   const hour = new Date().getHours();
-  if (hour < 12) return "Good morning, Reviewer!";
-  if (hour < 18) return "Good afternoon, Reviewer!";
-  return "Good evening, Reviewer!";
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  return `${greeting}, ${name || "Reviewer"}!`;
 }
 
 function timeAgo(timestamp) {
@@ -179,7 +173,7 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
 
       <section className="home-welcome">
         <span className="home-eyebrow">PERMIT REVIEW WORKSPACE</span>
-        <h1>{greetingForNow()}</h1>
+        <h1>{greetingForNow(user?.full_name?.split(" ")[0])}</h1>
         <p>Let’s make the permit process faster and more accurate.</p>
       </section>
 
@@ -245,6 +239,103 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
   );
 }
 
+function DecisionCompleteScreen({ application, requirements, user, decisionTimestamp, error, screen, onNavigate, onDashboard, onUpload, onReviewNext }) {
+  const [nextApplication, setNextApplication] = useState(null);
+  const [queueLoading, setQueueLoading] = useState(true);
+  const [queueUnavailable, setQueueUnavailable] = useState(false);
+  const approved = application.status === "approved";
+  const actor = user?.full_name || user?.email || "Reviewer";
+  const relevantFindings = application.findings.filter((finding) =>
+    approved ? finding.status === "dismissed" : finding.status === "confirmed");
+
+  useEffect(() => {
+    let active = true;
+    apiFetch("/api/applications")
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load the review queue.");
+        return response.json();
+      })
+      .then((applications) => {
+        if (!active) return;
+        setNextApplication(applications.find((item) =>
+          item.id !== application.id && item.status === "ready_for_review") ?? null);
+      })
+      .catch(() => {
+        if (active) {
+          setNextApplication(null);
+          setQueueUnavailable(true);
+        }
+      })
+      .finally(() => {
+        if (active) setQueueLoading(false);
+      });
+    return () => { active = false; };
+  }, [application.id]);
+
+  const decisionTime = decisionTimestamp ? timeAgo(decisionTimestamp) : "Just now";
+
+  return (
+    <div className="app-shell review-screen-shell decision-result-shell">
+      <header className="review-header">
+        <button className="review-back" type="button" onClick={onDashboard} aria-label="Back to dashboard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+        </button>
+        <div className="review-header-copy">
+          <strong>{application.label || "Application review"}</strong>
+          <small>{application.id}</small>
+        </div>
+        <span className={`review-header-status final ${approved ? "" : "returned"}`}>{application.status.replaceAll("_", " ")}</span>
+        {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
+      </header>
+      <nav className="review-tabs" aria-label="Application review sections">
+        {[ ["Findings", "Findings"], ["Extracted Fields", "Extracted Fields"], ["Requirements", "Requirements"], ["Outcome", "Decision"] ].map(([value, label]) => (
+          <button type="button" key={value} className={screen === value ? "active" : ""} aria-current={screen === value ? "page" : undefined} onClick={() => onNavigate(value)}>{label}</button>
+        ))}
+      </nav>
+      <div className="review-workspace">
+        <main className="main-content review-main decision-result-main">
+          <section className="card outcome-card decision-result-card">
+            <div className={`outcome-icon ${approved ? "approved" : "returned"}`} aria-hidden="true">{approved ? "✓" : "↩"}</div>
+            <div className="outcome-copy">
+              <span className="eyebrow">REVIEW COMPLETE</span>
+              <h2>{approved ? "Application approved" : "Returned for correction"}</h2>
+              <p>{approved
+                ? "The decision has been recorded and the application is marked as approved."
+                : "The application was returned with the confirmed findings attached for correction."}</p>
+            </div>
+          </section>
+
+          <section className="card decision-summary-card" aria-label="Decision summary">
+            <div className="card-heading"><div><h2>Decision summary</h2><p>Recorded for this application.</p></div></div>
+            <div className="decision-receipt">
+              <div><span>Reference No.</span><strong title={application.id}>{application.id}</strong></div>
+              {approved && <div><span>Permit Type</span><strong>{requirements?.lgu?.application_type || "Business Permit"}</strong></div>}
+              {!approved && <div><span>Findings attached</span><strong>{relevantFindings.length} {relevantFindings.length === 1 ? "finding" : "findings"}</strong></div>}
+              <div><span>{approved ? "Approved by" : "Returned by"}</span><strong>{actor}</strong></div>
+              {approved && <div><span>Findings handled</span><strong>{relevantFindings.length} handled</strong></div>}
+              <div><span>Time</span><strong><time dateTime={decisionTimestamp || undefined}>{decisionTime}</time></strong></div>
+            </div>
+          </section>
+
+          <div className="decision-complete-actions">
+            <button
+              className="primary-button decision-next-button"
+              type="button"
+              disabled={queueLoading || queueUnavailable || !nextApplication}
+              onClick={() => nextApplication && onReviewNext(nextApplication.id)}
+            >{queueLoading ? "Checking review queue…" : queueUnavailable ? "Review Queue Unavailable" : nextApplication ? "Review Next Application" : "No Pending Applications"}</button>
+            <button className="outline-button decision-dashboard-button" type="button" onClick={onDashboard}>Back to Dashboard</button>
+          </div>
+          {error && <p className="decision-queue-note" role="alert">{error}</p>}
+          {!queueLoading && queueUnavailable && <p className="decision-queue-note" role="status">Could not check the review queue. Return to the dashboard to refresh it.</p>}
+          {!queueLoading && !queueUnavailable && !nextApplication && <p className="decision-queue-note">You’re all caught up. There are no other applications ready for review.</p>}
+        </main>
+      </div>
+      <BottomNavigation active="Applications" onHome={onDashboard} onApplications={onUpload} onScan={onUpload} />
+    </div>
+  );
+}
+
 function App() {
   const [application, setApplication] = useState(null);
   const [requirements, setRequirements] = useState(null);
@@ -277,12 +368,49 @@ function App() {
   const [showFindingDetailMobile, setShowFindingDetailMobile] = useState(false);
   const [noteError, setNoteError] = useState("");
   const [decisionTimestamp, setDecisionTimestamp] = useState(null);
+  const [pendingDecision, setPendingDecision] = useState(null);
+  const decisionCancelRef = useRef(null);
+  const decisionConfirmRef = useRef(null);
+  const decisionTriggerRef = useRef(null);
 
   const selectedFinding = useMemo(
     () => application?.findings.find((finding) => finding.finding_id === selectedFindingId) ?? application?.findings[0] ?? null,
     [application, selectedFindingId],
   );
-  const decision = outcomeFor(application);
+  const decision = application ? nextOutcome(application) : "locked";
+
+  useEffect(() => {
+    if (!pendingDecision) {
+      decisionTriggerRef.current?.focus();
+      decisionTriggerRef.current = null;
+      return undefined;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    decisionCancelRef.current?.focus();
+    function handleDialogKeyDown(event) {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        setPendingDecision(null);
+      } else if (event.key === "Tab") {
+        const first = decisionCancelRef.current;
+        const last = decisionConfirmRef.current;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleDialogKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [pendingDecision, busy]);
 
   useEffect(() => {
     let active = true;
@@ -298,7 +426,8 @@ function App() {
 
     async function checkServer() {
       try {
-        const response = await apiFetch("/api/lgus/bagong-dalisay-demo/requirements", { signal: controller.signal });
+        const lguId = session?.user?.lgu_id ?? DEFAULT_LGU_ID;
+        const response = await apiFetch(`/api/lgus/${encodeURIComponent(lguId)}/requirements`, { signal: controller.signal });
         if (!response.ok) throw new Error("Requirements check failed.");
         const data = await response.json();
         const remaining = Math.max(0, 1500 - (Date.now() - startedAt));
@@ -321,7 +450,7 @@ function App() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [retryAttempt]);
+  }, [retryAttempt, session?.user?.lgu_id]);
 
   useEffect(() => {
     if (!MOCK_MODE) return undefined;
@@ -385,16 +514,24 @@ function App() {
       .then((items) => {
         if (!active) return;
         const entry = items.find((item) => item.application_id === application.id && item.action === action);
-        setDecisionTimestamp(entry?.timestamp ?? application.updated_at ?? null);
+        setDecisionTimestamp(entry?.timestamp ?? null);
       })
-      .catch(() => { if (active) setDecisionTimestamp(application.updated_at ?? null); });
+      .catch(() => { if (active) setDecisionTimestamp(null); });
     return () => { active = false; };
   }, [application?.id, application?.status]);
 
   async function request(url, options = {}) {
     const response = await apiFetch(url, options);
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "The request could not be completed.");
+    const body = await response.text();
+    let data = null;
+    if (body) {
+      try {
+        data = JSON.parse(body);
+      } catch {
+        if (response.ok) throw new Error("The server returned an invalid response.");
+      }
+    }
+    if (!response.ok) throw new Error(data?.error ?? (body || "The request could not be completed."));
     return data;
   }
 
@@ -446,7 +583,7 @@ function App() {
         });
       } else {
         const formData = new FormData();
-        formData.set("lgu_id", "bagong-dalisay-demo");
+        formData.set("lgu_id", session?.user?.lgu_id ?? DEFAULT_LGU_ID);
         formData.set("label", referenceLabel.trim() || "Business Permit Application");
         for (const [document] of DOCUMENTS) {
           const file = files[document];
@@ -528,20 +665,27 @@ function App() {
     }
   }
 
-  async function decide(outcome) {
-    if (!application) return;
-    const action = outcome === "approve" ? "Approve" : "Return";
-    if (!window.confirm(`${action} this application? This cannot be undone.`)) return;
+  function requestDecision(outcome, event) {
+    if (!application || busy) return;
+    decisionTriggerRef.current = event.currentTarget;
+    setPendingDecision(outcome);
+  }
+
+  async function decide() {
+    const outcome = pendingDecision;
+    if (!application || !outcome || busy) return;
     setBusy(true);
     setError("");
     try {
       const updated = await request(`/api/applications/${application.id}/${outcome}`, { method: "POST" });
       setApplication(updated);
       setDecisionTimestamp(new Date().toISOString());
+      setScreen("Decision Complete");
     } catch (cause) {
       setError(cause.message);
     } finally {
       setBusy(false);
+      setPendingDecision(null);
     }
   }
 
@@ -551,6 +695,7 @@ function App() {
     try {
       const selected = await request(`/api/applications/${id}`);
       setApplication(selected);
+      setDecisionTimestamp(null);
       setFindingUpdateMessage("");
       setSelectedFindingId(selected.findings[0]?.finding_id ?? null);
       setShowFindingDetailMobile(false);
@@ -677,6 +822,21 @@ function App() {
 
   if (screen === "Home") {
     return <HomeScreen onUpload={() => setScreen("Upload")} onOpenApplication={openApplication} user={session.user} onSignOut={signOut} />;
+  }
+
+  if (screen === "Decision Complete" && application) {
+    return <DecisionCompleteScreen
+      application={application}
+      requirements={requirements}
+      user={session.user}
+      decisionTimestamp={decisionTimestamp}
+      error={error}
+      screen={screen}
+      onNavigate={setScreen}
+      onDashboard={() => setScreen("Home")}
+      onUpload={() => setScreen("Upload")}
+      onReviewNext={openApplication}
+    />;
   }
 
   return (
@@ -980,15 +1140,22 @@ function App() {
               <div className="outcome-copy">
                 <span className="eyebrow">REVIEWER DECISION</span>
                 <h2>{application?.status === "approved" ? "Application approved" : application?.status === "returned" ? "Application returned" : "Decision pending"}</h2>
-                <p>{decision === "approve"
-                  ? "All findings have been dismissed or no findings were raised. You may approve this application."
-                  : decision === "return"
-                    ? "At least one finding is confirmed. Return the application for correction."
-                    : "Open or escalated findings must be resolved before a final decision."}</p>
-                <div className="outcome-actions">
-                  <button className="primary-button" disabled={busy || decision !== "approve" || finalDecision} onClick={() => decide("approve")}>Approve application</button>
-                  <button className="outline-button" disabled={busy || decision !== "return" || finalDecision} onClick={() => decide("return")}>Return for correction</button>
-                </div>
+                <p>{finalDecision
+                  ? "This application already has a final decision. It cannot be changed."
+                  : decision === "approve"
+                    ? "All findings are dismissed or none were raised. You may approve this application."
+                    : decision === "return"
+                      ? "At least one finding is confirmed and all findings are resolved. You may return this application for correction."
+                      : "Open or escalated findings must be resolved before a final decision."}</p>
+                {!finalDecision && <div className="outcome-actions">
+                  <button className="primary-button" disabled={busy || decision !== "approve"} onClick={(event) => requestDecision("approve", event)}>Approve application</button>
+                  <button className="outline-button" disabled={busy || decision !== "return"} aria-describedby={decision === "locked" || decision === "approve" ? "return-decision-guidance" : undefined} onClick={(event) => requestDecision("return", event)}>Return for correction</button>
+                </div>}
+                {!finalDecision && decision !== "return" && <p className="outcome-guidance" id="return-decision-guidance">
+                  {decision === "locked"
+                    ? "To return this application, confirm at least one finding and resolve every other open or escalated finding."
+                    : "To return this application, mark at least one finding Confirmed. Dismissing every finding enables approval instead."}
+                </p>}
               </div>
             </section>
           )}
@@ -1017,6 +1184,47 @@ function App() {
         onApplications={() => setScreen("Upload")}
         onScan={() => setScreen("Upload")}
       />
+      {pendingDecision && <div
+        className="decision-dialog-backdrop"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !busy) setPendingDecision(null);
+        }}
+      >
+        <section
+          className="decision-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="decision-dialog-title"
+          aria-describedby="decision-dialog-description"
+        >
+          <div className={`decision-dialog-icon ${pendingDecision}`} aria-hidden="true">
+            {pendingDecision === "approve" ? "✓" : "↩"}
+          </div>
+          <span className="eyebrow">FINAL DECISION</span>
+          <h2 id="decision-dialog-title">{pendingDecision === "approve" ? "Approve this application?" : "Return this application?"}</h2>
+          <p id="decision-dialog-description">
+            {pendingDecision === "approve"
+              ? `This will approve ${application?.label || "this application"}. You cannot change the decision afterward.`
+              : `This will return ${application?.label || "this application"} for correction. You cannot change the decision afterward.`}
+          </p>
+          <div className="decision-dialog-actions">
+            <button
+              ref={decisionCancelRef}
+              className="outline-button"
+              type="button"
+              disabled={busy}
+              onClick={() => setPendingDecision(null)}
+            >Cancel</button>
+            <button
+              ref={decisionConfirmRef}
+              className={`primary-button decision-dialog-confirm ${pendingDecision}`}
+              type="button"
+              disabled={busy}
+              onClick={decide}
+            >{busy ? "Saving decision…" : pendingDecision === "approve" ? "Confirm approval" : "Confirm return"}</button>
+          </div>
+        </section>
+      </div>}
     </div>
   );
 }

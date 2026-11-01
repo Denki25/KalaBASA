@@ -145,14 +145,16 @@ function activityText(entry) {
   }
 }
 
-function uploadedDocuments(application, readPdf, fileStorage) {
+function uploadedDocuments(application, pagesByDocument) {
   const docs = application.documents.map((item) => item.document);
   const form = application.documents.find((item) => item.document === "application_form");
   if (!form) return docs;
-  return fileStorage.withFile(application.id, form.document, (filename) => readPdf(filename)).then(({ pages }) => [
+  const pages = pagesByDocument.get(form.document);
+  if (!pages) throw new Error("The application form was not read during extraction.");
+  return [
     { document: form.document, checklist: readApplicationChecklist(pages) },
     ...docs.filter((document) => document !== form.document),
-  ]);
+  ];
 }
 
 export function createApp({
@@ -172,7 +174,10 @@ export function createApp({
   const maxConcurrency = Math.max(1, llmMaxConcurrency
     ?? (Number.isFinite(configuredConcurrency) ? configuredConcurrency : llmConfig.provider === "anthropic" ? 5 : 2));
   app.set("trust proxy", 1);
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024, files: DocumentType.options.length },
+  });
   const mutationRateLimit = createIpRateLimiter(Number.isFinite(rateLimitPer10Min) ? Math.max(0, rateLimitPer10Min) : 20);
   const reserveDailyModelCall = createDailyModelCallGuard(Number.isFinite(dailyExtractionLimit) ? Math.max(0, dailyExtractionLimit) : 200);
   app.use(express.json({ limit: "1mb" }));
@@ -283,7 +288,7 @@ export function createApp({
     }
   });
 
-  app.post("/api/applications", mutationRateLimit, needWrite, upload.array("files"), async (request, response, next) => {
+  app.post("/api/applications", needWrite, mutationRateLimit, upload.array("files"), async (request, response, next) => {
     try {
       if (mockMode) {
         const fixture = fixtureApplications.find((item) =>
@@ -296,7 +301,7 @@ export function createApp({
       }
 
       const files = request.files ?? [];
-      const documentTypes = request.body.document_types ?? request.body["document_types[]"];
+      const documentTypes = request.body?.document_types ?? request.body?.["document_types[]"];
       const types = Array.isArray(documentTypes) ? documentTypes : documentTypes ? [documentTypes] : [];
       if (files.length === 0 || files.length !== types.length) {
         return sendError(response, 400, "Upload one PDF per document_types[] entry.");
@@ -305,7 +310,8 @@ export function createApp({
       if (new Set(parsedTypes).size !== parsedTypes.length) {
         return sendError(response, 400, "Only one PDF per document type can be uploaded.");
       }
-      if (files.some((file) => file.mimetype !== "application/pdf" && !file.originalname.toLowerCase().endsWith(".pdf"))) {
+      if (files.some((file) => !file.originalname.toLowerCase().endsWith(".pdf")
+        || !file.buffer.subarray(0, 5).equals(Buffer.from("%PDF-")))) {
         return sendError(response, 400, "Every uploaded document must be a PDF.");
       }
 
@@ -355,6 +361,9 @@ export function createApp({
     try {
       application = await store.get(request.params.id);
       if (!application) return sendError(response, 404, "Application not found.");
+      if (["approved", "returned", "extracting"].includes(application.status)) {
+        return sendError(response, 409, "This application cannot be processed in its current state.");
+      }
       if (mockMode) {
         await audit(store, application, "application_processed", { mode: "mock" });
         return sendParsed(response, Application, application, 202);
@@ -363,12 +372,14 @@ export function createApp({
       application.status = "extracting";
       await store.save(application);
       await audit(store, application, "extraction_started");
+      const pagesByDocument = new Map();
       const fieldGroups = await mapWithConcurrency(application.documents, maxConcurrency, async (document) => {
         const { pages, method } = await fileStorage.withFile(
           application.id,
           document.document,
           (filePath) => readPdf(filePath),
         );
+        pagesByDocument.set(document.document, pages);
         document.pages = pages.length;
         document.method = method;
         return extractDocument({
@@ -382,7 +393,7 @@ export function createApp({
       });
       const allFields = fieldGroups.flat();
       application.fields = allFields;
-      const uploaded = await uploadedDocuments(application, readPdf, fileStorage);
+      const uploaded = uploadedDocuments(application, pagesByDocument);
       application.findings = [
         ...checkRequirements(uploaded, requirements),
         ...checkRequiredFields(allFields, requirements),
@@ -400,7 +411,9 @@ export function createApp({
       }
       if (error instanceof Error && error.name === "ZodError") return sendError(response, 400, error.message);
       if (error instanceof DailyExtractionLimitError) return sendError(response, 429, error.message);
-      return sendError(response, 500, error.message || "The application could not be processed.");
+      if (error?.status === 400) return sendError(response, 400, error.message);
+      console.error("Application extraction failed:", error);
+      return sendError(response, 500, "Extraction failed. Please retry; if it continues, contact support.");
     }
   });
 
@@ -418,8 +431,8 @@ export function createApp({
     try {
       const application = await store.get(request.params.id);
       if (!application) return sendError(response, 404, "Application not found.");
-      if (["approved", "returned"].includes(application.status)) {
-        return sendError(response, 409, "This application already has a final decision.");
+      if (application.status !== "ready_for_review") {
+        return sendError(response, 409, "Findings can only be updated while an application is ready for review.");
       }
       const input = FindingUpdate.parse(request.body);
       if (["dismissed", "escalated"].includes(input.status) && !input.reviewer_note?.trim()) {
@@ -452,8 +465,8 @@ export function createApp({
       try {
         const application = await store.get(request.params.id);
         if (!application) return sendError(response, 404, "Application not found.");
-        if (["approved", "returned"].includes(application.status)) {
-          return sendError(response, 409, "This application already has a final decision.");
+        if (application.status !== "ready_for_review") {
+          return sendError(response, 409, "A decision can only be made while an application is ready for review.");
         }
         if (nextOutcome(application) !== outcome) {
           return sendError(response, 409, `Application cannot be ${outcome === "approve" ? "approved" : "returned"} in its current finding state.`);
@@ -479,6 +492,12 @@ export function createApp({
     if (response.headersSent) return next(error);
     if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
       return sendError(response, 400, "Each PDF must be 20 MB or smaller.");
+    }
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_COUNT") {
+      return sendError(response, 400, `Upload no more than ${DocumentType.options.length} PDFs.`);
+    }
+    if (error instanceof multer.MulterError && error.code === "LIMIT_UNEXPECTED_FILE") {
+      return sendError(response, 400, `Upload no more than ${DocumentType.options.length} PDFs in the files field.`);
     }
     console.error(error);
     return sendError(response, 500, "The request could not be completed.");

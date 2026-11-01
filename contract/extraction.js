@@ -114,7 +114,7 @@ export async function extractDocument({ document, pages, method = "text_layer", 
   let parsed, lastErr;
   for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
     try {
-      const res = await client.messages.create({ model, max_tokens: 2000, system, messages: [{ role: "user", content: user }] });
+      const res = await client.messages.create({ model, max_tokens: 2000, temperature: 0, system, messages: [{ role: "user", content: user }] });
       const text = res.content.filter((b) => b.type === "text").map((b) => b.text).join("");
       const output = LlmOutput.parse(JSON.parse(stripFences(text)));
       parsed = {

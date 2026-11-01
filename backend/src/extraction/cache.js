@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_MODEL, extractDocument } from "kalabasa-contract/extraction.js";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -17,24 +18,21 @@ export class DailyExtractionLimitError extends Error {
 
 export function getLlmConfig(env = process.env) {
   const provider = env.LLM_PROVIDER || "anthropic";
-  if (!new Set(["anthropic", "openai-compatible", "gemini"]).has(provider)) {
+  if (!new Set(["anthropic", "openai-compatible"]).has(provider)) {
     throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
   }
   const model = provider === "openai-compatible"
     ? env.LLM_MODEL || ""
-    : env.KALABASA_MODEL || (provider === "gemini" ? "gemini-3.6-flash" : DEFAULT_MODEL);
+    : env.KALABASA_MODEL || DEFAULT_MODEL;
   return {
     provider,
     model,
-    apiKey: provider === "gemini" ? env.GEMINI_API_KEY : provider === "openai-compatible" ? env.LLM_API_KEY : env.ANTHROPIC_API_KEY,
-    baseUrl: provider === "gemini"
-      ? env.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai"
-      : env.LLM_BASE_URL,
+    apiKey: provider === "openai-compatible" ? env.LLM_API_KEY : env.ANTHROPIC_API_KEY,
+    baseUrl: env.LLM_BASE_URL,
   };
 }
 
-const isOpenAiCompatible = (provider) => provider === "openai-compatible" || provider === "gemini";
-const apiKeyName = (provider) => provider === "gemini" ? "GEMINI_API_KEY" : provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+const apiKeyName = (provider) => provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
 
 export function cacheKey({ document, pages, model = DEFAULT_MODEL, provider = "anthropic" }) {
   return createHash("sha256")
@@ -97,18 +95,6 @@ export function normalizeModelJson(text) {
 }
 
 const defaultSleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-let nextGeminiRequestAt = 0;
-let geminiRequestQueue = Promise.resolve();
-
-function waitForGeminiRequestSlot() {
-  const pending = geminiRequestQueue.catch(() => {}).then(async () => {
-    const waitMs = Math.max(0, nextGeminiRequestAt - Date.now());
-    if (waitMs > 0) await defaultSleep(waitMs);
-    nextGeminiRequestAt = Date.now() + 12500;
-  });
-  geminiRequestQueue = pending;
-  return pending;
-}
 
 export function createLlmClient({
   provider,
@@ -122,6 +108,7 @@ export function createLlmClient({
   let httpAttempts = 0;
   let terminalHttpError = null;
   if (provider === "anthropic") {
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required for the anthropic provider.");
     const anthropic = anthropicClientFactory(apiKey);
     return {
       messages: {
@@ -152,7 +139,7 @@ export function createLlmClient({
       },
     };
   }
-  if (!isOpenAiCompatible(provider)) throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
+  if (provider !== "openai-compatible") throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
   if (!baseUrl) throw new Error("LLM_BASE_URL is required for the openai-compatible provider.");
   if (!apiKey) throw new Error(`${apiKeyName(provider)} is required for the ${provider} provider.`);
 
@@ -169,9 +156,7 @@ export function createLlmClient({
         while (httpAttempts < 4) {
           await onModelCall();
           httpAttempts += 1;
-          if (provider === "gemini") await waitForGeminiRequestSlot();
-          const body = { model: request.model, max_tokens: request.max_tokens, messages };
-          if (provider === "gemini") body.response_format = { type: "json_object" };
+          const body = { model: request.model, max_tokens: request.max_tokens, temperature: request.temperature ?? 0, messages };
           response = await fetchImpl(endpoint, {
             method: "POST",
             headers: {
@@ -259,8 +244,14 @@ export async function extractDocumentCached({
   apiKey ??= config.apiKey;
   baseUrl ??= config.baseUrl;
   const key = cacheKey({ document, pages, model, provider });
-  const selectedCacheFile = live ? liveFile : cacheFile;
-  const cache = live ? {} : await readCacheFile(cacheFile);
+  // Keep responses from real provider calls out of the checked-in sample cache.
+  // Custom cache paths remain useful for isolated tests and local tooling.
+  const writesToLiveCache = live || (Boolean(apiKey) && cacheFile === seededCacheFile);
+  const selectedCacheFile = writesToLiveCache ? liveFile : cacheFile;
+  const cacheFiles = live ? [] : [...new Set([cacheFile, liveFile])];
+  const cacheContent = new Map(await Promise.all(cacheFiles.map(async (file) => [file, await readCacheFile(file)])));
+  // Seeded sample answers take precedence over prior live responses when both match.
+  const cache = live ? {} : Object.assign({}, cacheContent.get(liveFile), cacheContent.get(cacheFile));
   const entry = cache[key] ?? (provider === "anthropic"
     ? cache[legacyAnthropicCacheKey({ document, pages, model })]
     : undefined);

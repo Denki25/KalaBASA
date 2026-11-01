@@ -95,9 +95,9 @@ test("upload then process works end to end using private storage only", async ()
     const form = new FormData();
     form.append("label", "Storage test");
     form.append("document_types[]", "application_form");
-    form.append("files", new Blob(["FORM-PDF"], { type: "application/pdf" }), "form.pdf");
+    form.append("files", new Blob(["%PDF-1.4\nFORM-PDF"], { type: "application/pdf" }), "form.pdf");
     form.append("document_types[]", "dti_certificate");
-    form.append("files", new Blob(["DTI-PDF"], { type: "application/pdf" }), "dti.pdf");
+    form.append("files", new Blob(["%PDF-1.4\nDTI-PDF"], { type: "application/pdf" }), "dti.pdf");
     const created = await fetch(`${base}/api/applications`, { method: "POST", body: form });
     assert.equal(created.status, 201);
     const { id } = await created.json();
@@ -107,7 +107,7 @@ test("upload then process works end to end using private storage only", async ()
 
     const processed = await fetch(`${base}/api/applications/${id}/process`, { method: "POST" });
     assert.equal(processed.status, 202);
-    assert.ok(seen.includes("FORM-PDF") && seen.includes("DTI-PDF"), "processing read the stored copies");
+    assert.ok(seen.some((text) => text.includes("FORM-PDF")) && seen.some((text) => text.includes("DTI-PDF")), "processing read the stored copies");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
@@ -131,9 +131,9 @@ test("a failed upload removes the files that were already stored", async () => {
   try {
     const form = new FormData();
     form.append("document_types[]", "application_form");
-    form.append("files", new Blob(["A"], { type: "application/pdf" }), "a.pdf");
+    form.append("files", new Blob(["%PDF-1.4\nA"], { type: "application/pdf" }), "a.pdf");
     form.append("document_types[]", "dti_certificate");
-    form.append("files", new Blob(["B"], { type: "application/pdf" }), "b.pdf");
+    form.append("files", new Blob(["%PDF-1.4\nB"], { type: "application/pdf" }), "b.pdf");
     const response = await fetch(`${base}/api/applications`, { method: "POST", body: form });
     assert.ok(response.status >= 400);
     assert.equal(client.buckets.get("application-documents").size, 0);

@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../");
 const fixturesDirectory = path.join(repoRoot, "contract", "fixtures");
-const fixtureNames = (await fs.readdir(fixturesDirectory)).filter((name) => name.endsWith(".json"));
+const mockMode = process.env.MOCK_MODE === "true";
+const fixtureNames = mockMode ? (await fs.readdir(fixturesDirectory)).filter((name) => name.endsWith(".json")) : [];
 const fixtures = await Promise.all(fixtureNames.map(async (name) =>
   Application.parse(JSON.parse(await fs.readFile(path.join(fixturesDirectory, name), "utf8")))));
 const store = createStore(fixtures);

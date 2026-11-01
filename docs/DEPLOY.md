@@ -2,6 +2,8 @@
 
 This setup deploys one Render Web Service. The Express process serves both the API and the built React frontend; no separate static site or CORS configuration is needed.
 
+Requires Node.js 22.9 or newer.
+
 ## 1. Prepare Supabase (optional)
 
 Create a Supabase project and run [`backend/db/schema.sql`](../backend/db/schema.sql) and [`backend/db/auth.sql`](../backend/db/auth.sql) in its SQL editor. Add a profile for each Supabase Auth user. To store uploaded PDFs in the private `application-documents` bucket, also run [`backend/db/storage.sql`](../backend/db/storage.sql).
@@ -33,9 +35,8 @@ Render supplies `PORT`; the Express server listens on it automatically.
 
 | Variable | Value / use |
 | --- | --- |
-| `GEMINI_API_KEY` | Required for Gemini extraction. Store as a secret in the host environment. |
-| `KALABASA_MODEL` | Gemini model identifier; defaults to `gemini-3.6-flash` when Gemini is selected. |
-| `LLM_PROVIDER` | Provider selector: `gemini`, `anthropic` (default), or `openai-compatible`. |
+| `ANTHROPIC_API_KEY` | Required for Anthropic extraction. Store as a secret in the host environment. |
+| `LLM_PROVIDER` | Provider selector: `anthropic` (default) or `openai-compatible`. |
 | `LLM_BASE_URL` | Base URL for an OpenAI-compatible `/chat/completions` endpoint. |
 | `LLM_API_KEY` | API key for the selected OpenAI-compatible provider. Store as a secret. |
 | `LLM_MODEL` | Model name for the selected OpenAI-compatible provider. |
@@ -47,8 +48,9 @@ Render supplies `PORT`; the Express server listens on it automatically.
 | `MOCK_MODE` | Set to `true` for fixture-backed demo mode or `false` for real uploads and extraction. This is baked into the frontend at build time; changing it on the host requires a new build/deploy. |
 | `RATE_LIMIT_PER_10MIN` | Maximum create/process POST requests per IP in ten minutes. Defaults to `20`. |
 | `DAILY_EXTRACTION_LIMIT` | Maximum live model calls per UTC day. Defaults to `200`; cached/mock extraction does not count. |
+| `MAX_PDF_PAGES` | Maximum pages processed per PDF. Defaults to `30`. |
 
-When `MOCK_MODE=true`, the application workflow uses fixtures and does not call an LLM. For Gemini, set `MOCK_MODE=false`, `LLM_PROVIDER=gemini`, and `GEMINI_API_KEY`. For an OpenAI-compatible provider, also set `LLM_PROVIDER=openai-compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Supabase is optional; without both Supabase variables, the service uses in-memory metadata storage.
+When `MOCK_MODE=true`, the application workflow uses fixtures and does not call an LLM. For Anthropic, set `MOCK_MODE=false` and `ANTHROPIC_API_KEY`. For an OpenAI-compatible provider, set `LLM_PROVIDER=openai-compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Supabase is optional; without both Supabase variables, the service uses in-memory metadata storage.
 
 Keep authentication enabled for deployments and create a Supabase Auth user plus profile for each reviewer. Setting `AUTH_DISABLED=true` allows anyone with the URL to use the API; use it only for local demos. Keep `MOCK_MODE=true` on public deployments and never upload real documents to a demo deployment.
 

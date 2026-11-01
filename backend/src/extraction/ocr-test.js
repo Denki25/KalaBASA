@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readPdfPages } from "./pdf.js";
+import { PdfPageLimitError, readPdfPages } from "./pdf.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const scannedDirectory = path.join(repoRoot, "samples", "ocr_fallback_test");
@@ -11,8 +11,11 @@ const names = [
 ];
 
 for (const name of names) {
-  const { pages, method } = await readPdfPages(path.join(scannedDirectory, name));
+  const pdfPath = path.join(scannedDirectory, name);
+  const { pages, method } = await readPdfPages(pdfPath);
   assert.equal(method, "ocr", `${name} should use OCR`);
   assert.ok(pages.every((page) => page.length > 0), `${name} OCR should return page text`);
   console.log(`PASS ${name}: OCR returned ${pages.length} page(s)`);
+  await assert.rejects(readPdfPages(pdfPath, { maxPages: 0 }), PdfPageLimitError);
 }
+console.log("PASS PDF page limit returns a clear client error");
