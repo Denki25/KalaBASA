@@ -209,7 +209,8 @@ test("processing limits extraction concurrency and returns provider/model header
     mockMode: false,
     llmMaxConcurrency: 2,
     readPdf: async () => ({ pages: ["fake document"], method: "text_layer" }),
-    extractDocument: async ({ document }) => {
+    extractDocument: async ({ document, live }) => {
+      assert.equal(live, true);
       active += 1;
       maxActive = Math.max(maxActive, active);
       await new Promise((resolve) => setTimeout(resolve, 15));

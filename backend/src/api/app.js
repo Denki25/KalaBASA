@@ -375,6 +375,7 @@ export function createApp({
           document: document.document,
           pages,
           method,
+          live: true,
           provider: llmConfig.provider,
           model: llmConfig.model,
           onModelCall: reserveDailyModelCall,
