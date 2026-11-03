@@ -26,9 +26,13 @@ To scan uploaded PDFs and images with AI, configure `GEMINI_API_KEY` and keep `M
 
 ## Troubleshooting
 
+Gemini requests retry temporary timeouts and connection failures up to four total attempts per document. Each attempt has a 60-second timeout; set `LLM_REQUEST_TIMEOUT_MS` in `.env` to change it, then restart the API.
+
 If the API says a Supabase variable is missing, check whether it is already set in your PowerShell session with `$env:SUPABASE_URL` (and `$env:SUPABASE_SERVICE_KEY`). Clear stale values with `Remove-Item Env:SUPABASE_URL` or `Remove-Item Env:SUPABASE_SERVICE_KEY`. Variables already present in the shell override `.env`, so `.env` does not replace them.
 
 ## Tests
+
+Existing Supabase projects must run [backend/db/verification.sql](./backend/db/verification.sql) before starting this version. Document review now checks configured date ranges and requires evidence notes for validity and authenticity verification of every upload before approval. These are reviewer attestations; issuer lookup and automated tampering detection are not implemented. See [implementation boundaries](./docs/REAL_VS_MOCKED.md).
 
 ```powershell
 npm run test:contract

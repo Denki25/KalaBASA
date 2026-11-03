@@ -105,6 +105,11 @@
       "severity": "medium"
     }
   ],
+  "validity_checks": [
+    { "rule_id": "R-VALID-DTI", "document": "dti_certificate", "field": "expiry_date", "start_field": "registration_date", "severity": "high" },
+    { "rule_id": "R-VALID-BRGY", "document": "barangay_clearance", "field": "valid_until", "start_field": "issue_date", "severity": "high" },
+    { "rule_id": "R-VALID-LEASE", "document": "lease_contract", "field": "lease_end", "start_field": "lease_start", "severity": "high" }
+  ],
   "do_not_compare": [
     "owner_residence_address"
   ],

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import requirements from "../../../samples/lgu_requirements.json" with { type: "json" };
-import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "./index.js";
+import { checkRequiredFields, checkRequirements, compareAcrossDocuments, checkValidity, parseDocumentDate, reviewDate } from "./index.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const samplesRoot = path.join(repoRoot, "samples");
@@ -107,6 +107,10 @@ const ownerNames = (secondName) => [
 ];
 assert.equal(compareAcrossDocuments(ownerNames("Dela Cruz, Juan Carlos"), requirements).length, 0, "missing middle initial and surname-first form are harmless");
 assert.equal(compareAcrossDocuments(ownerNames("Juan Carlos R. Dela Cruz"), requirements).length, 1, "different middle initials mismatch");
+assert.equal(compareAcrossDocuments([
+  { document: "application_form", field: "business_name", value: "Santos Bakery", page: 1, source_text: "Santos Bakery" },
+  { document: "dti_certificate", field: "business_name", value: "Reyes Laundry", page: 1, source_text: "Reyes Laundry" },
+], requirements).length, 1, "a DTI certificate for another business must be flagged");
 
 const missingChecklist = [
   { document: "application_form", checklist: [{
@@ -144,3 +148,26 @@ assert.ok(omittedFieldFinding, "an omitted required extraction from an uploaded 
 assert.equal(omittedFieldFinding.evidence[0].source_text, null);
 
 console.log("PASS address/name/TIN normalization, exact numbers, checklist messaging, and do-not-compare rules");
+
+assert.equal(parseDocumentDate("2028-02-29"), "2028-02-29");
+assert.equal(parseDocumentDate("February 29, 2027"), null);
+assert.equal(parseDocumentDate("2026-13-01"), null);
+assert.equal(parseDocumentDate("04/05/2026"), null);
+assert.equal(parseDocumentDate("5 Apr 2027"), "2027-04-05");
+assert.equal(reviewDate(new Date("2026-11-03T17:00:00Z")), "2026-11-04");
+const validityFields = (end, start = "2026-01-01") => [
+  { document: "barangay_clearance", field: "valid_until", value: end, page: 1, source_text: end, verified: true },
+  { document: "barangay_clearance", field: "issue_date", value: start, page: 1, source_text: start, verified: true },
+];
+const dateChecks = (fields, docs = ["barangay_clearance"]) => checkValidity(fields, docs, requirements, "2026-11-04");
+assert.equal(dateChecks(validityFields("2026-11-04")).length, 0, "expiry date is inclusive");
+assert.match(dateChecks(validityFields("2026-11-03"))[0].message, /validity ended/);
+assert.match(dateChecks(validityFields("2027-12-31", "2026-11-05"))[0].message, /after the review date/);
+assert.match(dateChecks(validityFields("2026-01-01", "2026-02-01"))[0].message, /start date is later/);
+for (const invalid of [null, "04/05/2026", "2026-02-30", "unknown"]) {
+  assert.equal(dateChecks(validityFields(invalid)).length, 1);
+}
+assert.equal(dateChecks(validityFields("2027-12-31").map((f) => ({ ...f, verified: false }))).length, 1);
+assert.equal(dateChecks([], []).length, 0, "absent documents are handled by completeness checks");
+assert.equal(dateChecks([])[0].evidence[0].source_text, null);
+console.log("PASS validity dates, ambiguity, evidence, expiry boundary, and review timezone");

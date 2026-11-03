@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import logo from "../../design/splash/KalaBASA (4).png";
+import homeLogo from "../../design/splash/Frame 7.png";
 import DocumentScanner from "./scanner/DocumentScanner.jsx";
 import Reports from "./Reports.jsx";
 import Profile from "./Profile.jsx";
+import VerificationReview, { ReviewSummary } from "./VerificationReview.jsx";
+import { nextOutcome } from "kalabasa-contract/schemas.js";
 import { SettingsProvider, useSettings } from "./settings.jsx";
 
 const MOCK_MODE = import.meta.env.MOCK_MODE === true;
@@ -64,10 +67,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const SCREENS = ["Upload", "Requirements", "Extracted Fields", "Findings", "Outcome"];
 
 function outcomeFor(application) {
-  const statuses = application?.findings.map((finding) => finding.status) ?? [];
-  if (statuses.some((status) => status === "open" || status === "escalated")) return "locked";
-  if (statuses.includes("confirmed")) return "return";
-  return "approve";
+  return application ? nextOutcome(application) : "locked";
 }
 
 function textWithHighlight(text, target) {
@@ -100,11 +100,9 @@ function formattedDecisionTime(value) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function greetingForNow() {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Good morning, Reviewer!";
-  if (hour < 18) return "Good afternoon, Reviewer!";
-  return "Good evening, Reviewer!";
+function formattedDecisionClock(value) {
+  if (!value) return "Time unavailable";
+  return new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date(value));
 }
 
 const iconArtwork = {
@@ -115,7 +113,9 @@ const iconArtwork = {
   return: <><path d="M9 14 4 9l5-5" /><path d="M4 9h9a6 6 0 0 1 6 6v1" /></>,
   upload: <><path d="M12 15V4m-4 4 4-4 4 4" /><path d="M5 14v5h14v-5" /></>,
   file: <><path d="M7 3h7l4 4v14H7z" /><path d="M14 3v5h4M10 13h5M10 17h5" /></>,
+  camera: <><path d="M8 5.5 9.4 4h5.2L16 5.5h3A2.5 2.5 0 0 1 21.5 8v9a2.5 2.5 0 0 1-2.5 2.5H5A2.5 2.5 0 0 1 2.5 17V8A2.5 2.5 0 0 1 5 5.5h3Z" /><circle cx="12" cy="12.5" r="4" /></>,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5m0-8h.01" /></>,
+  lock: <><rect x="4.5" y="10" width="15" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3" /></>,
 };
 
 function Icon({ name, size = 18, className = "" }) {
@@ -154,27 +154,40 @@ function FilePreview({ file }) {
     : <span className="file-preview-image-placeholder" aria-hidden="true"><Icon name="file" size={17} /></span>;
 }
 
-function timeAgo(timestamp) {
-  const minutes = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 60000));
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+function formatTimestamp(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Time unavailable";
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function BottomNavigation({ active, onHome, onApplications, onScan, onReports, onProfile }) {
+function displayApplicationName(application) {
+  const extractedName = application.business_name?.trim() || application.owner_name?.trim();
+  if (extractedName) return extractedName;
+  if (application.label && application.label.toLowerCase() !== "business permit application") return application.label;
+  return "Permit applicant";
+}
+
+function displayApplicationStatus(application) {
+  if (application.status === "ready_for_review" && application.open_findings > 0) return { label: "Flagged", tone: "flagged" };
+  if (application.status === "ready_for_review") return { label: "Ready", tone: "ready" };
+  if (application.status === "extracting") return { label: "Processing", tone: "processing" };
+  if (application.status === "approved") return { label: "Approved", tone: "approved" };
+  if (application.status === "returned") return { label: "Returned", tone: "returned" };
+  return { label: "Uploaded", tone: "uploaded" };
+}
+
+function BottomNavigation({ active, onHome, onApplications, onScan, onReports, onProfile, hideScan = false }) {
   return (
-    <nav className="bottom-navigation" aria-label="Main navigation">
+    <nav className={`bottom-navigation${hideScan ? " no-scan" : ""}`} aria-label="Main navigation">
       <button className={active === "Home" ? "active" : ""} type="button" onClick={onHome} aria-current={active === "Home" ? "page" : undefined}>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3.5 10 8.5-7 8.5 7v10a.8.8 0 0 1-.8.8h-5.4v-6.3h-4.6v6.3H4.3a.8.8 0 0 1-.8-.8z" /></svg>Home
       </button>
       <button className={active === "Applications" ? "active" : ""} type="button" onClick={onApplications} aria-current={active === "Applications" ? "page" : undefined}>
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h7" /></svg>Applications
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></svg>Applications
       </button>
-      <button className="scan-nav-action" type="button" aria-label="Open document scanner" onClick={onScan}>
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2m8 0h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2m-8 0H6a2 2 0 0 1-2-2v-2"/><path d="M8 9h8a2 2 0 0 1 2 2v4H6v-4a2 2 0 0 1 2-2Z"/><circle cx="12" cy="12" r="1.5"/></svg>
-      </button>
+      {!hideScan && <button className="scan-nav-action" type="button" aria-label="Scan a permit" onClick={onScan}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 5.5 9.4 4h5.2L16 5.5h3A2.5 2.5 0 0 1 21.5 8v9a2.5 2.5 0 0 1-2.5 2.5H5A2.5 2.5 0 0 1 2.5 17V8A2.5 2.5 0 0 1 5 5.5h3Z"/><circle cx="12" cy="12.5" r="4"/><circle cx="18" cy="8.5" r=".8" fill="currentColor" stroke="none"/></svg>
+      </button>}
       <button className={active === "Reports" ? "active" : ""} type="button" onClick={onReports} aria-current={active === "Reports" ? "page" : undefined}>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20h16M7 16V9m5 7V4m5 12v-5" /></svg>Reports
       </button>
@@ -185,7 +198,7 @@ function BottomNavigation({ active, onHome, onApplications, onScan, onReports, o
   );
 }
 
-function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, onSignOut, scannerOpen, onOpenScanner, onCloseScanner, onConfirmScan }) {
+function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, scannerOpen, onOpenScanner, onCloseScanner, onConfirmScan }) {
   const [applications, setApplications] = useState([]);
   const [activity, setActivity] = useState([]);
   const [showAllActivity, setShowAllActivity] = useState(false);
@@ -228,11 +241,12 @@ function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, o
   }, []);
 
   const filteredApplications = applications.filter((application) =>
-    `${application.id} ${application.label}`.toLowerCase().includes(query.trim().toLowerCase()));
+    `${application.id} ${application.label} ${application.business_name ?? ""} ${application.owner_name ?? ""}`
+      .toLowerCase().includes(query.trim().toLowerCase()));
   const suggestions = query.trim() ? filteredApplications.slice(0, 5) : [];
   const showSuggestions = searchFocused && query.trim().length > 0;
   const visibleActivity = showAllActivity ? activity : activity.slice(0, 5);
-  const visibleApplications = showAllApplications ? filteredApplications : filteredApplications.slice(0, 5);
+  const visibleApplications = showAllApplications ? filteredApplications : filteredApplications.slice(0, 2);
 
   function openApplication(application) {
     setQuery("");
@@ -277,21 +291,20 @@ function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, o
 
   return (
     <main className="home-screen">
+      <div className="home-hero">
       <header className="home-header">
-        <img className="home-logo" src={logo} alt="KalaBASA" />
+        <img className="home-logo" src={homeLogo} alt="KalaBASA" />
         {MOCK_MODE && <span className="home-demo-badge"><i />Demo mode / mocked data</span>}
         {user && (
           <span className="home-user">
-            <span>{user.full_name} · {user.role}</span>
-            <button className="signout-link" type="button" onClick={onSignOut}>Sign out</button>
+            <span>{user.full_name}</span>
           </span>
         )}
       </header>
 
       <section className="home-welcome">
         <span className="home-eyebrow">PERMIT REVIEW WORKSPACE</span>
-        <h1>{greetingForNow()}</h1>
-        <p>Let’s make the permit process faster and more accurate.</p>
+        <h1>Review dashboard</h1>
       </section>
 
       <div className={`home-search-wrap${showSuggestions ? " suggestions-open" : ""}`}>
@@ -331,9 +344,7 @@ function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, o
             }}>
               <svg aria-hidden="true" viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15" /></svg>
             </button>
-          ) : (
-            <span className="search-hint">ID or name</span>
-          )}
+          ) : null}
         </div>
         {showSuggestions && (
           <div className="search-suggestions" id="application-search-suggestions" role="listbox" aria-label="Matching applications">
@@ -363,20 +374,61 @@ function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, o
           </div>
         )}
       </div>
+      </div>
 
       <section className="home-stats" aria-label="Application statistics">
-        <article className="home-stat pending-stat"><span className="stat-icon"><Icon name="file" /></span><strong>{stats.pending}</strong><span>Pending</span></article>
-        <article className="home-stat processed-stat"><span className="stat-icon"><Icon name="check" /></span><strong>{stats.processed_today}</strong><span>Processed<br />Today</span></article>
-        <article className="home-stat flagged-stat"><span className="stat-icon"><Icon name="alert" /></span><strong>{stats.flagged}</strong><span>Flagged</span></article>
+        <div className="home-stat pending-stat">
+          <span className="stat-icon"><Icon name="file" /></span><strong>{stats.pending}</strong><span>Ready for review</span>
+        </div>
+        <div className={`home-stat processed-stat${stats.processed_today === 0 ? " is-zero" : ""}`}>
+          <span className="stat-icon"><Icon name="check" /></span><strong>{stats.processed_today}</strong>
+          <span>Processed today</span>
+          {stats.processed_today === 0 && <small className="stat-empty-copy">Ready for today</small>}
+        </div>
+        <div className="home-stat flagged-stat">
+          <span className="stat-icon"><Icon name="alert" /></span><strong>{stats.flagged}</strong><span>Flagged</span>
+        </div>
       </section>
-
-      <button className="home-upload-card" type="button" onClick={onUpload}>
-        <span className="upload-art" aria-hidden="true"><Icon name="upload" size={24} /><i>AI</i></span>
-        <span className="upload-copy"><strong>Let KalaBASA do the check</strong><small>Upload an application to get started.</small><small>AI-assisted review.</small></span>
-        <span className="upload-arrow" aria-hidden="true"><Icon name="arrow-right" size={16} /></span>
-      </button>
+      <p className="home-stat-note">Flagged cases are included in Ready for review. The queue count includes all applications.</p>
 
       {loadError && <p className="home-load-error" role="alert">{loadError}</p>}
+
+      <section id="review-queue" className="home-applications" aria-labelledby="applications-heading">
+        <div className="home-section-heading">
+          <h2 id="applications-heading">Review queue</h2>
+          <span className="queue-total-count" aria-label={`${filteredApplications.length} total applications`}>{filteredApplications.length} total</span>
+          <button className="activity-view-all" type="button" onClick={() => setShowAllApplications((showAll) => !showAll)}>
+            {showAllApplications ? "Show less" : "View all"}
+          </button>
+        </div>
+        {loading ? <p className="home-empty">Loading applications...</p> : filteredApplications.length === 0 ? (
+          <p className="home-empty">No applications match this queue.</p>
+        ) : (
+          <ul className="application-list">
+            {visibleApplications.map((item) => {
+              const name = displayApplicationName(item);
+              const status = displayApplicationStatus(item);
+              const label = item.label && item.label.toLowerCase() !== "business permit application" && item.label !== name
+                ? item.label : "Permit application";
+              const priority = item.open_findings > 0 ? "High priority" : "Routine";
+              return <li key={item.id}>
+                <button type="button" onClick={() => openApplication(item)}>
+                  <span className="application-file-icon"><Icon name="file" size={18} /></span>
+                  <span className="application-row-copy">
+                    <strong>{name}</strong>
+                    <span className="application-meta">{label} · Submitted {new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span>
+                    <small className="application-id">ID · {item.id.slice(-8)}</small>
+                  </span>
+                  <span className="application-row-state">
+                    <span className={`application-status status-${status.tone}`}>{status.label}</span>
+                    <span className={`application-priority${item.open_findings > 0 ? " is-high" : ""}`}>{priority}</span>
+                  </span>
+                </button>
+              </li>;
+            })}
+          </ul>
+        )}
+      </section>
 
       <section className="home-activity" aria-labelledby="recent-activity-heading">
         <div className="home-section-heading">
@@ -389,41 +441,30 @@ function HomeScreen({ onUpload, onReports, onProfile, onOpenApplication, user, o
           <p className="home-empty">No activity yet</p>
         ) : (
           <ol className="activity-list">
-            {visibleActivity.map((item, index) => (
-              <li className="activity-item" key={`${item.application_id}-${item.action}-${item.timestamp}-${index}`}>
-                <span className={`activity-dot activity-${item.action}`}><Icon name={activityIconName(item)} size={15} /></span>
-                <span className="activity-copy"><strong>{item.text}</strong><small>{applications.find((application) => application.id === item.application_id)?.label ?? item.application_id}</small></span>
-                <time dateTime={item.timestamp}>{timeAgo(item.timestamp)}</time>
-              </li>
-            ))}
+            {visibleActivity.map((item, index) => {
+              const application = applications.find((candidate) => candidate.id === item.application_id);
+              const applicationName = application ? displayApplicationName(application) : "Application details unavailable";
+              const summary = application ? `${applicationName} · ID ${application.id.slice(-8)}` : `ID ${item.application_id.slice(-8)}`;
+              const activityTitle = application?.finding_summary && ["extraction_completed", "finding_updated"].includes(item.action)
+                ? `${item.action === "finding_updated" ? "Review updated" : "Review needed"}: ${application.finding_summary}`
+                : item.text;
+              return <li key={`${item.application_id}-${item.action}-${item.timestamp}-${index}`}>
+                <button className="activity-item" type="button" disabled={!application} onClick={() => application && openApplication(application)} aria-label={`${activityTitle}. ${summary}`}>
+                  <span className={`activity-dot activity-${item.action}`}><Icon name={activityIconName(item)} size={16} /></span>
+                  <span className="activity-copy"><strong title={activityTitle}>{activityTitle}</strong><small>{summary}</small></span>
+                  <time dateTime={item.timestamp}>{formatTimestamp(item.timestamp)}</time>
+                </button>
+              </li>;
+            })}
           </ol>
         )}
       </section>
 
-      <section className="home-applications" aria-labelledby="applications-heading">
-        <div className="home-section-heading">
-          <h2 id="applications-heading">Applications</h2>
-          <span>{filteredApplications.length}</span>
-          <button className="activity-view-all" type="button" onClick={() => setShowAllApplications((showAll) => !showAll)}>
-            {showAllApplications ? "Show recent" : "View all"}
-          </button>
-        </div>
-        {loading ? <p className="home-empty">Loading applications...</p> : filteredApplications.length === 0 ? (
-          <p className="home-empty">No applications match your search.</p>
-        ) : (
-          <ul className="application-list">
-            {visibleApplications.map((item) => (
-              <li key={item.id}>
-                <button type="button" onClick={() => openApplication(item)}>
-                  <span className="application-file-icon"><Icon name="file" size={16} /></span>
-                  <span className="application-row-copy"><strong>{item.label}</strong><small>{item.id}</small></span>
-                  <span className={`application-status status-${item.status}`}>{item.status.replaceAll("_", " ")}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <button className="home-upload-card" type="button" onClick={onUpload}>
+        <span className="upload-art" aria-hidden="true"><Icon name="upload" size={22} /></span>
+        <span className="upload-copy"><strong>Upload permit documents</strong><small>Start an application from your saved files.</small></span>
+        <span className="upload-action">Upload</span>
+      </button>
 
       <BottomNavigation active="Home" onHome={() => {}} onApplications={onUpload} onScan={onOpenScanner} onReports={onReports} onProfile={onProfile} />
       {scannerOpen && <DocumentScanner onCancel={onCloseScanner} onConfirm={onConfirmScan} />}
@@ -443,6 +484,8 @@ function AppContent() {
   const [referenceLabel, setReferenceLabel] = useState("");
   const [fileError, setFileError] = useState("");
   const [pendingApplications, setPendingApplications] = useState([]);
+  const [pendingQueueLoading, setPendingQueueLoading] = useState(false);
+  const [uploadMode, setUploadMode] = useState("new");
   const [checkApplicationId, setCheckApplicationId] = useState(null);
   const [aiCheckError, setAiCheckError] = useState("");
   const [checkStartedAt, setCheckStartedAt] = useState(null);
@@ -452,6 +495,7 @@ function AppContent() {
   const [reviewerNote, setReviewerNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [findingAction, setFindingAction] = useState(null);
   const [splashStatus, setSplashStatus] = useState("loading");
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [session, setSession] = useState(() => readSession());
@@ -464,6 +508,7 @@ function AppContent() {
   const [showFindingDetailMobile, setShowFindingDetailMobile] = useState(false);
   const [noteError, setNoteError] = useState("");
   const [decisionTimestamp, setDecisionTimestamp] = useState(null);
+  const [reportRecordId, setReportRecordId] = useState(null);
   const [decisionConfirmation, setDecisionConfirmation] = useState(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanNeedsManualCheck, setScanNeedsManualCheck] = useState(false);
@@ -600,6 +645,25 @@ function AppContent() {
       .catch(() => { if (active) setDecisionTimestamp(application.updated_at ?? null); });
     return () => { active = false; };
   }, [application?.id, application?.status]);
+
+  useEffect(() => {
+    if (screen !== "Outcome" || !["approved", "returned"].includes(application?.status)) return undefined;
+    let active = true;
+    setPendingQueueLoading(true);
+    apiFetch("/api/applications")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not refresh the review queue.");
+        return response.json();
+      })
+      .then((items) => {
+        if (active) setPendingApplications(items.filter((item) => item.status === "ready_for_review" && item.id !== application.id));
+      })
+      .catch(() => {
+        if (active) setPendingApplications((items) => items.filter((item) => item.id !== application.id));
+      })
+      .finally(() => { if (active) setPendingQueueLoading(false); });
+    return () => { active = false; };
+  }, [screen, application?.id, application?.status]);
 
   async function request(url, options = {}) {
     const response = await apiFetch(url, options);
@@ -766,6 +830,7 @@ function AppContent() {
       return;
     }
     setNoteError("");
+    setFindingAction(status);
     setBusy(true);
     setError("");
     try {
@@ -778,9 +843,11 @@ function AppContent() {
         ...current,
         findings: current.findings.map((finding) => finding.finding_id === updated.finding_id ? updated : finding),
       }));
+      setScreen("Outcome");
     } catch (cause) {
       setError(cause.message);
     } finally {
+      setFindingAction(null);
       setBusy(false);
     }
   }
@@ -795,6 +862,7 @@ function AppContent() {
       setDecisionTimestamp(new Date().toISOString());
     } catch (cause) {
       setError(cause.message);
+      try { setApplication(await request(`/api/applications/${application.id}`)); } catch { /* Keep the current review available if refresh fails. */ }
     } finally {
       setBusy(false);
     }
@@ -832,6 +900,17 @@ function AppContent() {
   const requiredDocuments = requirements?.required_documents ?? [];
   const submittedRequiredCount = requiredDocuments.filter((item) => uploaded.has(item.document)).length;
   const requiredCompletion = requiredDocuments.length ? Math.round((submittedRequiredCount / requiredDocuments.length) * 100) : 0;
+  const documentRequirementMap = new Map(requiredDocuments.map((item) => [item.document, item.required]));
+  const requiredUploadDocuments = DOCUMENTS.filter(([document]) => documentRequirementMap.get(document) ?? true);
+  const optionalUploadDocuments = DOCUMENTS.filter(([document]) => !(documentRequirementMap.get(document) ?? true));
+  const addedDocumentCount = DOCUMENTS.filter(([document]) => Boolean(files[document])).length;
+  const nextPendingApplications = pendingApplications.filter((item) => item.status === "ready_for_review" && item.id !== application?.id);
+  const reviewerName = session?.user?.full_name || session?.user?.email || "Reviewer";
+
+  function returnToQueue() {
+    setUploadMode("existing");
+    setScreen("Upload");
+  }
 
   async function signIn(event) {
     event.preventDefault();
@@ -939,34 +1018,32 @@ function AppContent() {
   }
 
   if (screen === "Home") {
-    return <HomeScreen onUpload={() => setScreen("Upload")} onReports={() => setScreen("Reports")} onProfile={() => setScreen("Profile")} onOpenApplication={openApplication} user={session?.user ?? null} onSignOut={signOut} scannerOpen={scannerOpen} onOpenScanner={() => setScannerOpen(true)} onCloseScanner={() => setScannerOpen(false)} onConfirmScan={confirmScan} />;
+    return <HomeScreen onUpload={() => setScreen("Upload")} onReports={() => setScreen("Reports")} onProfile={() => setScreen("Profile")} onOpenApplication={openApplication} user={session?.user ?? null} scannerOpen={scannerOpen} onOpenScanner={() => setScannerOpen(true)} onCloseScanner={() => setScannerOpen(false)} onConfirmScan={confirmScan} />;
   }
 
   return (
-    <div className={`app-shell ${flowScreen ? "review-flow-shell" : ""} ${reviewScreen ? "review-screen-shell" : ""} ${screen === "Reports" ? "reports-screen-shell" : ""} ${screen === "Profile" ? "profile-screen-shell" : ""}`}>
+    <div className={`app-shell ${flowScreen ? "review-flow-shell" : ""} ${screen === "Upload" ? "upload-screen-shell" : ""} ${reviewScreen ? "review-screen-shell" : ""} ${screen === "Reports" ? "reports-screen-shell" : ""} ${screen === "Profile" ? "profile-screen-shell" : ""}`}>
       {flowScreen ? (
         <header className="flow-header">
           <div className="flow-header-art" aria-hidden="true" />
           <button className="flow-back" type="button" aria-label="Back to Home" onClick={() => setScreen("Home")}>
             <Icon name="arrow-left" size={18} />
           </button>
-          <div className="flow-header-title">AI-Assisted <span>Review</span></div>
-          {session && <button className="signout-link" type="button" onClick={signOut}>Sign out</button>}
+          <div className="flow-header-copy"><div className="flow-header-title">AI-Assisted <span>Review</span></div><small>Permit application review.</small></div>
         </header>
       ) : reviewScreen ? (
         <header className="review-header">
           <div className="review-header-main">
-            <button className="review-back" type="button" onClick={() => setScreen("Home")} aria-label="Back to Home">
+            <button className="review-back" type="button" onClick={returnToQueue} aria-label="Back to Applications queue">
               <Icon name="arrow-left" size={18} />
             </button>
             <div className="review-header-copy">
               <strong>{application?.label || application?.id || "Application review"}</strong>
               {application?.label && <small>{application.id}</small>}
             </div>
-            {session && <button className="signout-link" type="button" onClick={signOut}>Sign out</button>}
           </div>
           <div className="review-header-meta">
-            <span className={`review-header-status ${finalDecision ? "final" : ""}`}>{application?.status?.replaceAll("_", " ") ?? "No application"}</span>
+            <span className={`review-header-status ${finalDecision ? `final status-${application.status}` : ""}`}>{application?.status?.replaceAll("_", " ") ?? "No application"}</span>
             {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
           </div>
         </header>
@@ -974,11 +1051,13 @@ function AppContent() {
         <header className="flow-header reports-flow-header">
           <div className="flow-header-art" aria-hidden="true" />
           <button className="flow-back" type="button" aria-label="Back to Home" onClick={() => setScreen("Home")}><Icon name="arrow-left" size={18} /></button>
+          <div className="flow-header-copy"><div className="flow-header-title">Reports</div><small>Application decisions and processing activity.</small></div>
         </header>
       ) : screen === "Profile" ? (
         <header className="flow-header profile-flow-header">
           <div className="flow-header-art" aria-hidden="true" />
           <button className="flow-back" type="button" aria-label="Back to Home" onClick={() => setScreen("Home")}><Icon name="arrow-left" size={18} /></button>
+          <div className="flow-header-copy"><div className="flow-header-title">Profile</div><small>Manage your account and preferences.</small></div>
         </header>
       ) : (
         <header className="topbar">
@@ -989,7 +1068,6 @@ function AppContent() {
           <div className="topbar-right">
             {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
             <span className="reviewer-label">Reviewer workspace</span>
-            {session && <button className="signout-link" type="button" onClick={signOut}>Sign out</button>}
           </div>
         </header>
       )}
@@ -1031,7 +1109,7 @@ function AppContent() {
                       : index === 1
                         ? <><path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3Z" /><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" /></>
                         : <><path d="M7 3h7l4 4v14H7zM14 3v5h4M10 13h5" /><path d="m10 17 2 2 4-4" /></>}</svg></i>
-                  <span>{step}</span><small>{index === 0 ? "Files received" : index === 1 ? "AI document check" : "Reviewer decision"}</small>
+                  <span>{step}</span><small>{index === 0 ? "Add documents" : index === 1 ? "Scanning for issues" : "Final decision"}</small>
                 </span>;
               })}
             </nav>
@@ -1050,27 +1128,35 @@ function AppContent() {
             {application && <div className="application-id">APPLICATION <strong>{application.id}</strong></div>}
           </div>}
 
-          {flowScreen && <p className="flow-intro">{screen === "Upload" ? "Upload or select an application to start the AI-powered document check." : screen === "AI Check" ? "Your application is being checked against its required documents." : application?.label}</p>}
+          {screen === "AI Check" && <p className="flow-intro">Your documents are being checked against permit requirements.</p>}
 
-          {reviewScreen && finalDecision && <div className="final-decision-banner" role="status">
-            <span className="final-decision-check"><Icon name="check" size={16} /></span>
-            <span><strong>Decision recorded</strong><small>{formattedDecisionTime(decisionTimestamp) || "Final decision saved"} · {application.status}</small></span>
+          {reviewScreen && finalDecision && <div className={`final-decision-banner ${application.status}`} role="status">
+            <span className={`final-decision-check ${application.status}`}><Icon name="check" size={16} /></span>
+            <span><strong>Decision recorded · {application.status === "approved" ? "Approved" : "Returned"} · {reviewerName} · {formattedDecisionClock(decisionTimestamp)}</strong><small>Saved {formattedDecisionTime(decisionTimestamp) || "to the application record"}</small></span>
           </div>}
+
+          {reviewScreen && application && <ReviewSummary application={application} requirements={requirements} />}
 
           {error && <div className="error-banner" role="alert">{error}</div>}
 
-          {screen === "Reports" && <Reports apiFetch={apiFetch} lguName={session?.user?.role === "admin" ? "All authorized LGUs" : session?.user?.lgu_id === requirements?.lgu.id ? requirements.lgu.name : `LGU ${session?.user?.lgu_id ?? "Authorized LGU"}`} />}
+          {screen === "Reports" && <Reports apiFetch={apiFetch} lguName={session?.user?.role === "admin" ? "All authorized LGUs" : session?.user?.lgu_id === requirements?.lgu.id ? requirements.lgu.name : `LGU ${session?.user?.lgu_id ?? "Authorized LGU"}`} selectedRecordId={reportRecordId} onSelectRecord={setReportRecordId} />}
           {screen === "Profile" && <Profile user={session?.user ?? null} lguName={session?.user?.lgu_id === requirements?.lgu.id ? requirements.lgu.name : `LGU ${session?.user?.lgu_id ?? "ACCOUNT SETTINGS"}`} onSignOut={session ? signOut : undefined} />}
 
-          {screen === "Upload" && (
+          {screen === "Upload" && <div className="upload-mode-switch" role="group" aria-label="Choose application task">
+            <button type="button" className={uploadMode === "new" ? "active" : ""} aria-pressed={uploadMode === "new"} onClick={() => setUploadMode("new")}>New upload</button>
+            <button type="button" className={uploadMode === "existing" ? "active" : ""} aria-pressed={uploadMode === "existing"} onClick={() => setUploadMode("existing")}>Existing applications <span>{pendingApplications.length}</span></button>
+          </div>}
+
+          {screen === "Upload" && uploadMode === "new" && (
             <section className="card upload-card">
               <div className="card-heading">
-                <div><h2>Upload application documents</h2><p>PDF, JPG, JPEG, or PNG · up to 20 MB per PDF and 10 MB per image. You can continue with missing documents.</p></div>
+                <div><h2>Add permit documents</h2><p>Choose documents for this permit application.</p><small className="upload-format-note">PDF, JPG, JPEG, PNG · max 20 MB per PDF and 10 MB per image</small></div>
               </div>
-              <form onSubmit={submitApplication}>
+              <form id="application-upload-form" onSubmit={submitApplication}>
                 {scanNeedsManualCheck && <p className="scan-ready-note" role="status">Scan saved on this device. Start AI Check when you’re ready.</p>}
-                {!MOCK_MODE && <label className="reference-field">Reference / label <span>Optional</span>
-                  <input value={referenceLabel} onChange={(event) => setReferenceLabel(event.target.value)} placeholder="BP-2026-0001" />
+                {!MOCK_MODE && <label className="reference-field"><span className="reference-label-copy">Reference / label <span className="optional-tag">Optional</span></span>
+                  <input value={referenceLabel} onChange={(event) => setReferenceLabel(event.target.value)} placeholder="e.g. BP-2026-0001" aria-describedby="reference-help" />
+                  <small id="reference-help">Add an internal case number or short name to find this application later.</small>
                 </label>}
                 {MOCK_MODE ? (
                   <div className="demo-upload-notice">
@@ -1084,10 +1170,12 @@ function AppContent() {
                 ) : (
                   <>
                   <div className="batch-upload-control">
-                    <div><strong>Add several files at once</strong><small>Choose multiple documents, then assign each file to its requirement.</small></div>
-                    <label className="choose-pdf batch-file-picker">Choose files
+                    <div><strong>Upload multiple documents</strong><small>Select several files to match them to the requirements below, or use Add file on a specific row.</small></div>
+                    <label className="choose-pdf batch-file-picker">
+                      <Icon name="upload" size={16} /> Add multiple files
                       <input className="document-file-input" type="file" multiple accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png" onChange={(event) => { queueMultipleFiles(event.target.files); event.target.value = ""; }} />
                     </label>
+                    <button className="scan-upload-action" type="button" aria-label="Scan a document with the camera" onClick={() => setScannerOpen(true)}><Icon name="camera" size={17} /> <span>Scan</span></button>
                   </div>
                   {batchFiles.length > 0 && <ul className="batch-file-list" aria-label="Files to assign">{batchFiles.map(({ id, file }) => (
                     <li key={id}>
@@ -1100,10 +1188,19 @@ function AppContent() {
                       <button className="remove-file" type="button" aria-label={`Remove ${file.name}`} onClick={() => setBatchFiles((current) => current.filter((item) => item.id !== id))}>Remove</button>
                     </li>
                   ))}</ul>}
-                  <div className="document-slots">
-                    {DOCUMENTS.map(([document, label]) => {
+                  <div className="document-groups">
+                    {requiredUploadDocuments.length > 0 && <section className="document-group" aria-labelledby="required-documents-heading">
+                      <h3 id="required-documents-heading">Required documents <span>{requiredUploadDocuments.length}</span></h3>
+                      <div className="document-slots">
+                    {requiredUploadDocuments.map(([document, label]) => {
                       const file = files[document];
-                      const sizeLabel = file ? `${fileTypeLabel(file)} · ${file.size >= 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`}` : "PDF, JPG, JPEG, or PNG";
+                      const sizeLabel = file ? `${fileTypeLabel(file)} · ${file.size >= 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`}` : ({
+                        application_form: "Complete all applicant and business details",
+                        dti_certificate: "Confirms registered business name and owner",
+                        barangay_clearance: "Confirms business location and clearance",
+                        lease_contract: "Shows the business premises and lease term",
+                        community_tax_certificate: "Confirms the owner’s community tax details",
+                      }[document] ?? "Attach the document for this requirement");
                       return <article
                         className={`document-slot ${draggingDocument === document ? "dragging" : ""} ${file ? "has-file" : ""}`}
                         key={document}
@@ -1111,24 +1208,44 @@ function AppContent() {
                         onDragLeave={() => setDraggingDocument(null)}
                         onDrop={(event) => { event.preventDefault(); setDraggingDocument(null); acceptFile(document, event.dataTransfer.files?.[0]); }}
                       >
-                        <span className="document-slot-icon">{file ? <FilePreview file={file} /> : <Icon name="file" size={17} />}</span>
+                        <span className={`document-slot-icon${file ? " has-file" : ""}`}>{file ? <><FilePreview file={file} /><span className="file-added-check"><Icon name="check" size={12} /></span></> : <Icon name="file" size={17} />}</span>
                         <div className="document-slot-copy">
-                          <label htmlFor={`file-${document}`}>{label}</label>
+                          <div className="document-slot-title"><label htmlFor={`file-${document}`}>{label}</label></div>
                           <small>{file ? `${file.name} · ${sizeLabel}` : sizeLabel}</small>
                         </div>
                         <label className="choose-pdf">
-                          Choose file
+                          {file ? "Replace" : "Add file"}
                           <input className="document-file-input" id={`file-${document}`} type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png" onChange={(event) => { acceptFile(document, event.target.files?.[0]); event.target.value = ""; }} />
                         </label>
                         {file && <button className="remove-file" type="button" onClick={() => removeFile(document)}>Remove</button>}
                       </article>;
                     })}
+                      </div>
+                    </section>}
+                    {optionalUploadDocuments.length > 0 && <section className="document-group" aria-labelledby="optional-documents-heading">
+                      <h3 id="optional-documents-heading">Optional documents <span>{optionalUploadDocuments.length}</span></h3>
+                      <div className="document-slots">
+                    {optionalUploadDocuments.map(([document, label]) => {
+                      const file = files[document];
+                      const sizeLabel = file ? `${fileTypeLabel(file)} · ${file.size >= 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`}` : "Supports the permit review";
+                      return <article className={`document-slot ${draggingDocument === document ? "dragging" : ""} ${file ? "has-file" : ""}`} key={document}
+                        onDragOver={(event) => { event.preventDefault(); setDraggingDocument(document); }}
+                        onDragLeave={() => setDraggingDocument(null)}
+                        onDrop={(event) => { event.preventDefault(); setDraggingDocument(null); acceptFile(document, event.dataTransfer.files?.[0]); }}>
+                        <span className={`document-slot-icon${file ? " has-file" : ""}`}>{file ? <><FilePreview file={file} /><span className="file-added-check"><Icon name="check" size={12} /></span></> : <Icon name="file" size={17} />}</span>
+                        <div className="document-slot-copy"><div className="document-slot-title"><label htmlFor={`file-${document}`}>{label}</label><span className="document-requirement-tag optional">Optional</span></div><small>{file ? `${file.name} · ${sizeLabel}` : sizeLabel}</small></div>
+                        <label className="choose-pdf">{file ? "Replace" : "Add file"}<input className="document-file-input" id={`file-${document}`} type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png" onChange={(event) => { acceptFile(document, event.target.files?.[0]); event.target.value = ""; }} /></label>
+                        {file && <button className="remove-file" type="button" onClick={() => removeFile(document)}>Remove</button>}
+                      </article>;
+                    })}
+                      </div>
+                    </section>}
                   </div>
                   </>
                 )}
                 {fileError && <p className="upload-file-error" role="alert">{fileError}</p>}
-                <div className="form-actions">
-                  <p>Missing documents will be flagged for the reviewer.</p>
+                <div className="form-actions upload-action-footer">
+                  <p role="status">{addedDocumentCount} of {DOCUMENTS.length} documents added. {addedDocumentCount === 0 ? "Add at least one document to continue." : "You can continue with missing documents."}</p>
                   <button className="primary-button start-ai-button" type="submit" disabled={busy || (!MOCK_MODE && !Object.values(files).some(Boolean))}>
                     {scanNeedsManualCheck ? "Run AI Check" : "Start AI Check"} <Icon name="arrow-right" size={16} />
                   </button>
@@ -1137,13 +1254,13 @@ function AppContent() {
             </section>
           )}
 
-          {screen === "Upload" && pendingApplications.length > 0 && (
+          {screen === "Upload" && uploadMode === "existing" && (
             <section className="pending-applications card">
-              <div className="card-heading"><div><h2>Or select a pending application</h2><p>Open a case that is already ready for review.</p></div></div>
-              <ul>{pendingApplications.map((item) => <li key={item.id}>
-                <span><strong>{item.label}</strong><small>{item.id}</small></span>
-                <button type="button" onClick={() => openApplication(item.id)}>Open</button>
-              </li>)}</ul>
+              <div className="card-heading"><div><h2>Continue an application</h2><p>Choose a case that is ready for review.</p></div></div>
+              {pendingApplications.length > 0 ? <ul>{pendingApplications.filter((item) => item.status === "ready_for_review").map((item) => <li key={item.id}>
+                <span><strong>{displayApplicationName(item)}</strong><small>{item.label} · Submitted {new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</small></span>
+                <button type="button" onClick={() => openApplication(item.id)}>Open application</button>
+              </li>)}</ul> : <div className="queue-empty-state"><p>You’re all caught up.</p><button type="button" onClick={() => setScreen("Home")}>Go to Home</button></div>}
             </section>
           )}
 
@@ -1197,16 +1314,16 @@ function AppContent() {
 
           {screen === "Extracted Fields" && (
             <section className="card">
-              <div className="card-heading"><div><h2>Extracted information</h2><p>Values are copied from source documents. Unverified values need reviewer attention.</p></div></div>
+              <div className="card-heading"><div><h2>Extracted information</h2><p>Source text matching checks extraction only. It does not verify document authenticity. Unmatched values need source review.</p></div></div>
               {application?.fields.length ? <div className="table-scroll"><table>
-                <thead><tr><th>Field</th><th>Value</th><th>Document</th><th>Page</th><th>Verification</th></tr></thead>
+                <thead><tr><th>Field</th><th>Value</th><th>Document</th><th>Page</th><th>Source text check</th></tr></thead>
                 <tbody>{application.fields.map((field, index) => <tr key={`${field.document}-${field.field}-${index}`}>
                   <td className="field-name">{field.field.replaceAll("_", " ")}</td>
                   <td>{field.value ?? <span className="null-value">{field.presence === "blank_printed" ? "Blank on document" : "Not found"}</span>}</td>
                   <td>{field.document.replaceAll("_", " ")}</td>
                   <td>{field.page}</td>
                   <td>{field.verified
-                    ? <span className="verified">Verified</span>
+                    ? <span className="verified">Source text matched</span>
                     : <span className="unverified"><Icon name="alert" size={14} />Unverified — review source</span>}</td>
                 </tr>)}</tbody>
               </table></div> : <p className="empty-state">Load or process an application to view extracted fields.</p>}
@@ -1218,7 +1335,7 @@ function AppContent() {
             <>
             <section className="review-summary-strip">
               <div className="review-summary-count">{application?.findings.length ?? 0}</div>
-              <div><strong>{application?.findings.length ? `${application.findings.length} findings need your review` : "No findings need review"}</strong><small>{submittedRequiredCount} of {requiredDocuments.length} required documents submitted</small></div>
+              <div><strong>{application?.findings.length ? `${application.findings.length} findings need your review` : "No automated findings"}</strong><small>{submittedRequiredCount} of {requiredDocuments.length} required documents submitted</small></div>
             </section>
             <div className={`findings-layout ${showFindingDetailMobile ? "show-detail-mobile" : ""}`}>
               <section className="card finding-list">
@@ -1276,15 +1393,35 @@ function AppContent() {
                   <textarea value={reviewerNote} onChange={(event) => { setReviewerNote(event.target.value); setNoteError(""); }} placeholder="Add a note for the review record…" rows="3" disabled={finalDecision} />
                 </label>
                 {noteError && <p className="note-error" role="alert">{noteError}</p>}
-                <div className="review-actions">
-                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("confirmed")}>Confirm</button>
-                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("dismissed")}>Dismiss</button>
-                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("escalated")}>Escalate</button>
+                <div className="review-actions" aria-busy={Boolean(findingAction)}>
+                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("confirmed")}>
+                    {findingAction === "confirmed" && <span className="finding-action-spinner" aria-hidden="true" />}{findingAction === "confirmed" ? "Saving…" : "Confirm"}
+                  </button>
+                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("dismissed")}>
+                    {findingAction === "dismissed" && <span className="finding-action-spinner" aria-hidden="true" />}{findingAction === "dismissed" ? "Saving…" : "Dismiss"}
+                  </button>
+                  <button className="outline-button" disabled={busy || finalDecision} onClick={() => updateFinding("escalated")}>
+                    {findingAction === "escalated" && <span className="finding-action-spinner" aria-hidden="true" />}{findingAction === "escalated" ? "Saving…" : "Escalate"}
+                  </button>
                 </div>
               </section>}
             </div>
             </>
           )}
+
+          {screen === "Outcome" && application && <VerificationReview
+            application={application}
+            disabled={finalDecision || busy || session?.user?.role === "viewer" || application.status !== "ready_for_review"}
+            onSave={async (input) => {
+              setBusy(true);
+              try {
+              const updated = await request(`/api/applications/${application.id}/verifications`, {
+                method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+              });
+              setApplication(updated);
+              } finally { setBusy(false); }
+            }}
+          />}
 
           {screen === "Outcome" && (
             <section className="card outcome-card">
@@ -1294,18 +1431,27 @@ function AppContent() {
               <div className="outcome-copy">
                 <span className="eyebrow">REVIEWER DECISION</span>
                 <h2>{application?.status === "approved" ? "Application approved" : application?.status === "returned" ? "Application returned" : "Decision pending"}</h2>
-                <p>{decision === "approve"
-                  ? "All findings have been dismissed or no findings were raised. You may approve this application."
+                <p>{finalDecision ? "This final decision is saved to the application record." : decision === "approve"
+                  ? "Findings are resolved and the reviewer has recorded validity and authenticity verification for every uploaded document."
                   : decision === "return"
-                    ? "At least one finding is confirmed. Return the application for correction."
-                    : "Open or escalated findings must be resolved before a final decision."}</p>
-                <div className="outcome-actions">
-                  <button className="primary-button" disabled={busy || decision !== "approve" || finalDecision} onClick={() => setDecisionConfirmation("approve")}>Approve application</button>
-                  <button className="outline-button" disabled={busy || decision !== "return" || finalDecision} onClick={() => setDecisionConfirmation("return")}>Return for correction</button>
-                </div>
+                    ? "A finding is confirmed or document verification failed. Return the application for correction."
+                    : "Resolve open or escalated findings and save validity and authenticity verification for every document before approval."}</p>
+                {finalDecision ? <div className="decision-locked"><Icon name="lock" size={15} />Decision locked</div> : <div className="outcome-actions">
+                  <button className="primary-button" disabled={busy || decision !== "approve" || requiredDocuments.some((r) => r.required && !uploaded.has(r.document)) || session?.user?.role === "viewer"} onClick={() => setDecisionConfirmation("approve")}>Approve application</button>
+                  <button className="outline-button" disabled={busy || decision !== "return" || session?.user?.role === "viewer"} onClick={() => setDecisionConfirmation("return")}>Return for correction</button>
+                </div>}
               </div>
             </section>
           )}
+
+          {screen === "Outcome" && finalDecision && <section className="post-decision-actions" aria-label="After decision">
+            {pendingQueueLoading ? <p className="post-decision-loading" role="status">Refreshing review queue…</p> : nextPendingApplications.length > 0 ? <button className="next-application-button" type="button" disabled={busy} onClick={() => openApplication(nextPendingApplications[0].id)}>
+              <span><strong>Next application</strong><small>{nextPendingApplications.length} remaining</small></span><Icon name="arrow-right" size={18} />
+            </button> : <div className="caught-up-state" role="status"><strong>You’re all caught up</strong><button className="primary-button" type="button" onClick={() => setScreen("Home")}>Go to Home</button></div>}
+            <button className="back-to-queue-button" type="button" onClick={returnToQueue}>Back to queue</button>
+            {/* TODO: Add “Reopen decision” only after the backend supports amending a locked decision. */}
+          </section>}
+          {screen === "Outcome" && finalDecision && <button className="view-in-reports-link" type="button" onClick={() => { setReportRecordId(application.id); setScreen("Reports"); }}>View in Reports</button>}
 
           {screen === "Outcome" && application?.findings?.length > 0 && <section className="card decision-findings">
             <div className="card-heading"><div><h2>Finding review record</h2><p>Status and saved reviewer notes for every finding.</p></div></div>
@@ -1325,7 +1471,6 @@ function AppContent() {
           </footer>}
         </main>
       </div>
-      {screen === "Reports" && <div className="reports-bottom-fade" aria-hidden="true" />}
       <BottomNavigation
         active={screen === "Profile" ? "Profile" : screen === "Reports" ? "Reports" : screen === "Home" ? "Home" : "Applications"}
         onHome={() => setScreen("Home")}

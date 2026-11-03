@@ -9,11 +9,13 @@ import {
   Application,
   DocumentType,
   Finding,
+  Verification,
+  VerificationInput,
   nextOutcome,
 } from "kalabasa-contract/schemas.js";
 import { DailyExtractionLimitError, extractDocumentCached, getLlmConfig } from "../extraction/cache.js";
 import { readDocumentPages } from "../extraction/pdf.js";
-import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "../rules/index.js";
+import { checkRequiredFields, checkRequirements, compareAcrossDocuments, checkValidity } from "../rules/index.js";
 import {
   ActivityResponse,
   ApiError,
@@ -23,7 +25,7 @@ import {
   Requirements,
   Stats,
 } from "./schemas.js";
-import { createStore } from "./store.js";
+import { createStore, DatabaseMigrationRequiredError } from "./store.js";
 import { readApplicationChecklist } from "./checklist.js";
 import { WRITE_ROLES, authMiddleware, currentActor } from "./auth.js";
 import { createLocalStorage } from "./documents.js";
@@ -107,7 +109,19 @@ function fixtureAudit(applications, auditEntries) {
     const timestamp = application.created_at;
     entries.push({ application_id: application.id, action: "application_created", details: {}, timestamp });
     if (!["uploaded", "extracting"].includes(application.status)) {
-      entries.push({ application_id: application.id, action: "application_processed", details: {}, timestamp });
+      const firstFinding = application.findings?.find((finding) => finding.status === "open" || finding.status === "escalated");
+      const findingSummary = firstFinding
+        ? `${firstFinding.field.replaceAll("_", " ")}: ${firstFinding.message}`.slice(0, 160)
+        : undefined;
+      entries.push({
+        application_id: application.id,
+        action: "extraction_completed",
+        details: {
+          findings: application.findings?.length ?? application.total_findings ?? 0,
+          ...(findingSummary ? { finding_summary: findingSummary } : {}),
+        },
+        timestamp,
+      });
     }
     if (application.status === "approved" || application.status === "returned") {
       entries.push({
@@ -124,11 +138,17 @@ function fixtureAudit(applications, auditEntries) {
 function activityText(entry) {
   switch (entry.action) {
     case "application_created": return "New application received";
-    case "extraction_completed": return Number(entry.details?.findings) > 0 ? "Inconsistency flagged" : "Application processed";
+    case "extraction_completed": {
+      const findingCount = Number(entry.details?.findings ?? 0);
+      if (findingCount <= 0) return "Application processed";
+      return entry.details?.finding_summary
+        ? `Review needed: ${entry.details.finding_summary}`
+        : `${findingCount} finding(s) need review`;
+    }
     case "application_processed": return "Application processed";
     case "finding_updated": return "Finding reviewed";
-    case "application_approved": return "Application approved";
-    case "application_returned": return "Application returned for correction";
+    case "application_approved": case "application_approve": return "Application approved";
+    case "application_returned": case "application_return": return "Application returned for correction";
     default: return null;
   }
 }
@@ -157,6 +177,7 @@ export function createApp({
   dailyExtractionLimit = Number.parseInt(process.env.DAILY_EXTRACTION_LIMIT ?? "200", 10),
 } = {}) {
   const app = express();
+  const mutationQueues = new Map();
   const extractionProgress = new Map();
   const llmConfig = getLlmConfig();
   app.set("trust proxy", 1);
@@ -179,8 +200,48 @@ export function createApp({
     if (!authEnabled || WRITE_ROLES.includes(request.user?.role)) return next();
     return sendError(response, 403, "Your role can view applications but cannot change them.");
   };
-  const visibleApplications = async (request) =>
-    (await store.list()).filter((item) => canSee(request, item.lgu_id));
+  const visibleApplications = async (request) => {
+    const lguId = authEnabled && request.user.role !== "admin" ? request.user.lgu_id : undefined;
+    return (await store.list(lguId)).filter((item) => canSee(request, item.lgu_id));
+  };
+  const decisionRecord = async (summary) => {
+    const application = await store.get(summary.id, { fresh: true });
+    if (!application) return null;
+    let history = await store.applicationHistory(application.id);
+    if (mockMode) history = fixtureAudit([application], history);
+    history = history.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    const decisionActions = application.status === "approved"
+      ? ["application_approved", "application_approve"]
+      : ["application_returned", "application_return"];
+    const decisionEvent = [...history].reverse().find((entry) => decisionActions.includes(entry.action));
+    const decidedAt = decisionEvent?.timestamp ?? null;
+    const latest = (actions) => history.filter((entry) => actions.includes(entry.action)).at(-1)?.timestamp ?? null;
+    const fieldValue = (name) => application.fields.find((field) => field.field === name)?.value ?? null;
+    return {
+      id: application.id,
+      lgu_id: application.lgu_id,
+      label: application.label,
+      applicant_name: fieldValue("business_name") || fieldValue("owner_name") || null,
+      business_name: fieldValue("business_name"),
+      owner_name: fieldValue("owner_name"),
+      status: application.status,
+      created_at: application.created_at,
+      decision: {
+        reviewer: decisionEvent?.details?.reviewer_name ?? decisionEvent?.actor ?? null,
+        decided_at: decidedAt,
+        reason: decisionEvent?.details?.reason ?? decisionEvent?.details?.note ?? null,
+      },
+      findings: application.findings,
+      documents: application.documents,
+      verifications: application.verifications,
+      history: {
+        submitted: latest(["application_created"]) ?? application.created_at,
+        ai_checked: latest(["extraction_completed", "application_processed"]),
+        reviewed: latest(["finding_updated"]),
+        decided: decidedAt,
+      },
+    };
+  };
 
   if (authEnabled) {
     app.post("/api/auth/login", async (request, response, next) => {
@@ -217,9 +278,53 @@ export function createApp({
     });
   }
 
+  // Keep verification changes and final decisions ordered within this API process.
+  app.use("/api/applications/:id", async (request, response, next) => {
+    if (request.method === "GET") return next();
+    const id = request.params.id;
+    const previous = mutationQueues.get(id) ?? Promise.resolve();
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    mutationQueues.set(id, pending);
+    await previous;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (mutationQueues.get(id) === pending) mutationQueues.delete(id);
+      release();
+    };
+    response.once("finish", finish);
+    response.once("close", finish);
+    if (response.destroyed) { finish(); return; }
+    next();
+  });
+
   app.get("/api/applications", async (request, response, next) => {
     try {
       return sendParsed(response, ApplicationsResponse, await visibleApplications(request));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/records", async (request, response, next) => {
+    try {
+      const decided = (await visibleApplications(request)).filter((item) => ["approved", "returned"].includes(item.status));
+      const records = (await Promise.all(decided.map(decisionRecord))).filter(Boolean);
+      records.sort((left, right) => (right.decision.decided_at ?? right.created_at).localeCompare(left.decision.decided_at ?? left.created_at));
+      return response.json(records.map(({ findings, documents, history, ...record }) => record));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/records/:id", async (request, response, next) => {
+    try {
+      const summary = (await visibleApplications(request)).find((item) => item.id === request.params.id);
+      if (!summary || !["approved", "returned"].includes(summary.status)) return sendError(response, 404, "Application record not found.");
+      const record = await decisionRecord(summary);
+      return record ? response.json(record) : sendError(response, 404, "Application record not found.");
     } catch (error) {
       return next(error);
     }
@@ -262,7 +367,7 @@ export function createApp({
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
       const processedToday = entries.filter((entry) =>
-        ["application_approved", "application_returned"].includes(entry.action)
+        ["application_approved", "application_returned", "application_approve", "application_return"].includes(entry.action)
         && new Date(entry.timestamp) >= startOfToday
         && new Date(entry.timestamp) <= new Date()).length;
       return sendParsed(response, Stats, {
@@ -389,7 +494,14 @@ export function createApp({
     try {
       application = await store.get(request.params.id);
       if (!application) return sendError(response, 404, "Application not found.");
+      if (["approved", "returned", "extracting"].includes(application.status)) {
+        return sendError(response, 409, "A finalized application or an extraction in progress cannot be processed again.");
+      }
       if (mockMode) {
+        application.verifications = [];
+        application.findings = application.findings.filter((f) => f.type !== "validity_issue");
+        application.findings.push(...checkValidity(application.fields, application.documents, requirements).map((f) => Finding.parse(f)));
+        await store.save(application);
         extractionProgress.set(application.id, {
           documents: application.documents.map((document) => ({ document: document.document, status: "complete" })),
         });
@@ -398,6 +510,7 @@ export function createApp({
       }
 
       application.status = "extracting";
+      application.verifications = [];
       await store.save(application);
       await audit(store, application, "extraction_started");
       const progress = application.documents.map((document, index) => ({
@@ -448,10 +561,19 @@ export function createApp({
         ...checkRequirements(uploaded, requirements),
         ...checkRequiredFields(allFields, requirements),
         ...compareAcrossDocuments(allFields, requirements),
+        ...checkValidity(allFields, application.documents, requirements),
       ];
       application.status = "ready_for_review";
       await store.save(application);
-      await audit(store, application, "extraction_completed", { fields: allFields.length, findings: application.findings.length });
+      const firstFinding = application.findings.find((finding) => finding.status === "open" || finding.status === "escalated");
+      const findingSummary = firstFinding
+        ? `${firstFinding.field.replaceAll("_", " ")}: ${firstFinding.message}`.slice(0, 160)
+        : undefined;
+      await audit(store, application, "extraction_completed", {
+        fields: allFields.length,
+        findings: application.findings.length,
+        ...(findingSummary ? { finding_summary: findingSummary } : {}),
+      });
       return sendParsed(response, Application, application, 202);
     } catch (error) {
       if (application?.status === "extracting") {
@@ -508,20 +630,57 @@ export function createApp({
     }
   });
 
+  app.patch("/api/applications/:id/verifications", async (request, response, next) => {
+    try {
+      const application = await store.get(request.params.id, { fresh: true });
+      if (!application) return sendError(response, 404, "Application not found.");
+      if (application.status !== "ready_for_review") return sendError(response, 409, "Only applications ready for review can be verified.");
+      const input = VerificationInput.parse(request.body);
+      if (!application.documents.some((d) => d.document === input.document)) return sendError(response, 400, "The document was not uploaded.");
+      const verification = Verification.parse({ ...input, reviewed_by: currentActor(), reviewed_at: new Date().toISOString() });
+      application.verifications = application.verifications.filter((v) => v.document !== input.document || v.kind !== input.kind);
+      application.verifications.push(verification);
+      await store.save(application);
+      await audit(store, application, "document_verification_updated", verification);
+      return sendParsed(response, Application, application);
+    } catch (error) {
+      if (error.name === "ZodError") return sendError(response, 400, error.message);
+      return next(error);
+    }
+  });
+
   for (const outcome of ["approve", "return"]) {
     app.post(`/api/applications/:id/${outcome}`, async (request, response, next) => {
       try {
-        const application = await store.get(request.params.id);
+        const application = await store.get(request.params.id, { fresh: true });
         if (!application) return sendError(response, 404, "Application not found.");
         if (["approved", "returned"].includes(application.status)) {
           return sendError(response, 409, "This application already has a final decision.");
         }
+        if (outcome === "approve" && application.status === "ready_for_review") {
+          // Recheck dates at decision time: a document may have expired since extraction.
+          const currentChecks = [
+            ...checkRequirements(application.documents, requirements),
+            ...checkValidity(application.fields, application.documents, requirements),
+          ];
+          const newChecks = currentChecks.filter((f) => !application.findings.some((old) => old.finding_id === f.finding_id && (f.type !== "validity_issue" || old.message === f.message)));
+          for (const finding of newChecks) {
+            application.findings = application.findings.filter((f) => f.finding_id !== finding.finding_id);
+            application.findings.push(Finding.parse(finding));
+          }
+          if (newChecks.length) {
+            await store.save(application);
+            await audit(store, application, "decision_checks_updated", { findings: newChecks.map((f) => f.finding_id) });
+          }
+          if (currentChecks.some((f) => f.type === "missing_document")) return sendError(response, 409, "Required documents are missing. Upload a complete application before approval.");
+        }
         if (nextOutcome(application) !== outcome) {
-          return sendError(response, 409, `Application cannot be ${outcome === "approve" ? "approved" : "returned"} in its current finding state.`);
+          return sendError(response, 409, "Resolve all findings and record validity and authenticity verification for every uploaded document before approval. Refresh the application to see any new date findings.");
         }
         application.status = outcome === "approve" ? "approved" : "returned";
         await store.save(application);
-        await audit(store, application, `application_${outcome}`);
+        const decisionAction = outcome === "approve" ? "application_approved" : "application_returned";
+        await audit(store, application, decisionAction, { reviewer_name: request.user?.full_name ?? currentActor(), verifications: application.verifications });
         return sendParsed(response, Application, application);
       } catch (error) {
         return next(error);
@@ -538,6 +697,7 @@ export function createApp({
   app.use((request, response) => sendError(response, 404, "API route not found."));
   app.use((error, request, response, next) => {
     if (response.headersSent) return next(error);
+    if (error instanceof DatabaseMigrationRequiredError) return sendError(response, 503, error.message);
     if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
       return sendError(response, 400, "PDF files must be 20 MB or smaller; image files must be 10 MB or smaller.");
     }

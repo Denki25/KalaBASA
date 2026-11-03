@@ -52,12 +52,17 @@ Evidence.parse({
 console.log("ok: absence evidence");
 
 // nextOutcome
-const mk = (...s) => ({ findings: s.map((status) => ({ status })) });
+const mk = (...s) => ({ status: "ready_for_review", documents: [{ document: "application_form" }], verifications: ["validity", "authenticity"].map((kind) => ({ document: "application_form", kind, status: "verified", evidence_note: "Checked with issuing office reference 123." })), findings: s.map((status) => ({ status })) });
 assert.equal(nextOutcome(mk()), "approve");
 assert.equal(nextOutcome(mk("dismissed")), "approve");
 assert.equal(nextOutcome(mk("dismissed", "open")), "locked");
 assert.equal(nextOutcome(mk("confirmed", "escalated")), "locked");
 assert.equal(nextOutcome(mk("confirmed", "dismissed")), "return");
+assert.equal(nextOutcome({ ...mk(), verifications: [] }), "locked");
+assert.equal(nextOutcome({ ...mk(), verifications: mk().verifications.slice(0, 1) }), "locked");
+assert.equal(nextOutcome({ ...mk(), status: "uploaded" }), "locked");
+assert.equal(nextOutcome({ ...mk(), documents: [] }), "locked");
+assert.equal(nextOutcome({ ...mk(), verifications: [{ ...mk().verifications[0], status: "rejected" }] }), "return");
 console.log("ok: nextOutcome");
 
 const p = buildPrompt("lease_contract", ["page one", "page two"]);
