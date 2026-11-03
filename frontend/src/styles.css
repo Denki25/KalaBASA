@@ -284,6 +284,9 @@ mark { border-radius: 2px; background: #ffedb9; color: #594410; padding: 1px 2px
 .home-activity, .home-applications { margin-top: 23px; }
 .home-section-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 1px 9px; }
 .home-section-heading h2 { margin: 0; color: var(--navy); font-size: 16px; font-weight: 750; letter-spacing: -.02em; }
+.activity-view-all { padding: 4px 2px; border: 0; background: transparent; color: var(--navy); font-size: 11px; font-weight: 700; }
+.activity-view-all:hover { color: var(--orange); }
+.activity-view-all:disabled { cursor: wait; }
 .home-section-heading > span { display: grid; min-width: 22px; height: 22px; place-items: center; border-radius: 12px; background: color-mix(in srgb, var(--navy) 8%, white); color: var(--navy); font-size: 10px; font-weight: 750; }
 .home-empty { padding: 18px 4px; margin: 0; color: color-mix(in srgb, var(--navy) 58%, white); font-size: 12px; }
 .activity-list, .application-list { display: grid; padding: 0; margin: 0; list-style: none; }

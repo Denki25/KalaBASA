@@ -240,7 +240,7 @@ export function createApp({
   app.get("/api/activity", async (request, response, next) => {
     try {
       const requestedLimit = Number(request.query.limit ?? 10);
-      const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(0, Math.floor(requestedLimit))) : 10;
+      const limit = Number.isFinite(requestedLimit) ? Math.min(5000, Math.max(0, Math.floor(requestedLimit))) : 10;
       const visible = await visibleApplications(request);
       const visibleIds = new Set(visible.map((item) => item.id));
       let entries = (await store.recentAudit(5000)).filter((entry) => visibleIds.has(entry.application_id));

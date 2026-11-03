@@ -128,6 +128,8 @@ function BottomNavigation({ active, onHome, onApplications, onScan }) {
 function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
   const [applications, setApplications] = useState([]);
   const [activity, setActivity] = useState([]);
+  const [showAllActivity, setShowAllActivity] = useState(false);
+  const [loadingAllActivity, setLoadingAllActivity] = useState(false);
   const [stats, setStats] = useState({ pending: 0, processed_today: 0, flagged: 0 });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -140,7 +142,7 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
         if (!response.ok) throw new Error("Could not load applications.");
         return response.json();
       }),
-      apiFetch("/api/activity?limit=10").then((response) => {
+      apiFetch("/api/activity?limit=5").then((response) => {
         if (!response.ok) throw new Error("Could not load recent activity.");
         return response.json();
       }),
@@ -164,6 +166,25 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
 
   const filteredApplications = applications.filter((application) =>
     `${application.id} ${application.label}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const visibleActivity = showAllActivity ? activity : activity.slice(0, 5);
+
+  async function toggleAllActivity() {
+    if (showAllActivity) {
+      setShowAllActivity(false);
+      return;
+    }
+    setLoadingAllActivity(true);
+    try {
+      const response = await apiFetch("/api/activity?limit=5000");
+      if (!response.ok) throw new Error("Could not load all activity.");
+      setActivity(await response.json());
+      setShowAllActivity(true);
+    } catch {
+      setLoadError("Could not load all activity. Please try again.");
+    } finally {
+      setLoadingAllActivity(false);
+    }
+  }
 
   return (
     <main className="home-screen">
@@ -206,12 +227,17 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
       {loadError && <p className="home-load-error" role="alert">{loadError}</p>}
 
       <section className="home-activity" aria-labelledby="recent-activity-heading">
-        <div className="home-section-heading"><h2 id="recent-activity-heading">Recent Activity</h2></div>
+        <div className="home-section-heading">
+          <h2 id="recent-activity-heading">{showAllActivity ? "All Activity" : "Recent Activity"}</h2>
+          <button className="activity-view-all" type="button" onClick={toggleAllActivity} disabled={loadingAllActivity}>
+            {loadingAllActivity ? "Loading..." : showAllActivity ? "Show recent" : "View all"}
+          </button>
+        </div>
         {loading ? <p className="home-empty">Loading activity...</p> : activity.length === 0 ? (
           <p className="home-empty">No activity yet</p>
         ) : (
           <ol className="activity-list">
-            {activity.map((item, index) => (
+            {visibleActivity.map((item, index) => (
               <li className="activity-item" key={`${item.application_id}-${item.action}-${item.timestamp}-${index}`}>
                 <span className={`activity-dot activity-${item.action}`} aria-hidden="true">{item.action === "application_approved" ? "✓" : item.action === "application_returned" ? "↩" : item.action === "finding_updated" || item.text === "Inconsistency flagged" ? "!" : "↑"}</span>
                 <span className="activity-copy"><strong>{item.text}</strong><small>{applications.find((application) => application.id === item.application_id)?.label ?? item.application_id}</small></span>
