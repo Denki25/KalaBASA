@@ -130,6 +130,7 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
   const [activity, setActivity] = useState([]);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [loadingAllActivity, setLoadingAllActivity] = useState(false);
+  const [showAllApplications, setShowAllApplications] = useState(false);
   const [stats, setStats] = useState({ pending: 0, processed_today: 0, flagged: 0 });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -167,6 +168,7 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
   const filteredApplications = applications.filter((application) =>
     `${application.id} ${application.label}`.toLowerCase().includes(query.trim().toLowerCase()));
   const visibleActivity = showAllActivity ? activity : activity.slice(0, 5);
+  const visibleApplications = showAllApplications ? filteredApplications : filteredApplications.slice(0, 5);
 
   async function toggleAllActivity() {
     if (showAllActivity) {
@@ -249,12 +251,18 @@ function HomeScreen({ onUpload, onOpenApplication, user, onSignOut }) {
       </section>
 
       <section className="home-applications" aria-labelledby="applications-heading">
-        <div className="home-section-heading"><h2 id="applications-heading">Applications</h2><span>{filteredApplications.length}</span></div>
+        <div className="home-section-heading">
+          <h2 id="applications-heading">Applications</h2>
+          <span>{filteredApplications.length}</span>
+          <button className="activity-view-all" type="button" onClick={() => setShowAllApplications((showAll) => !showAll)}>
+            {showAllApplications ? "Show recent" : "View all"}
+          </button>
+        </div>
         {loading ? <p className="home-empty">Loading applications...</p> : filteredApplications.length === 0 ? (
           <p className="home-empty">No applications match your search.</p>
         ) : (
           <ul className="application-list">
-            {filteredApplications.map((item) => (
+            {visibleApplications.map((item) => (
               <li key={item.id}>
                 <button type="button" onClick={() => onOpenApplication(item.id)}>
                   <span className="application-file-icon" aria-hidden="true">▤</span>
