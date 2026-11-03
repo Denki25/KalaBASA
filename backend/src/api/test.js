@@ -8,7 +8,7 @@ import { Application } from "kalabasa-contract/schemas.js";
 import { readPdfPages } from "../extraction/pdf.js";
 import { readApplicationChecklist } from "./checklist.js";
 import { createApp } from "./app.js";
-import { MemoryStore } from "./store.js";
+import { createStore, MemoryStore, SupabaseStore } from "./store.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const fixturePath = path.join(repoRoot, "contract", "fixtures", "set_05_demo_story.json");
@@ -17,6 +17,33 @@ const cleanFixture = Application.parse(JSON.parse(await fs.readFile(
   path.join(repoRoot, "contract", "fixtures", "set_01_clean.json"),
   "utf8",
 )));
+
+test("createStore treats blank Supabase settings as unset", () => {
+  assert.ok(createStore([], { SUPABASE_URL: "", SUPABASE_SERVICE_KEY: "" }) instanceof MemoryStore);
+  assert.ok(createStore([], { SUPABASE_URL: "   ", SUPABASE_SERVICE_KEY: " \t " }) instanceof MemoryStore);
+});
+
+test("createStore explains which Supabase setting is missing without exposing values", () => {
+  const url = "https://example.supabase.co";
+  const key = "test-service-secret-value";
+  for (const [env, missing] of [
+    [{ SUPABASE_URL: url, SUPABASE_SERVICE_KEY: "" }, "SUPABASE_SERVICE_KEY"],
+    [{ SUPABASE_URL: "", SUPABASE_SERVICE_KEY: key }, "SUPABASE_URL"],
+  ]) {
+    assert.throws(() => createStore([], env), (error) => {
+      assert.match(error.message, new RegExp(missing));
+      assert.doesNotMatch(error.message, /example\.supabase\.co|test-service-secret-value/);
+      return true;
+    });
+  }
+});
+
+test("createStore enables Supabase when both settings are present", () => {
+  assert.ok(createStore([], {
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_SERVICE_KEY: "test-service-secret-value",
+  }) instanceof SupabaseStore);
+});
 
 async function withApi(callback, application = fixture, appOptions = {}) {
   const store = new MemoryStore(Array.isArray(application) ? application : [application]);
@@ -194,7 +221,7 @@ test("processing limits extraction concurrency and returns provider/model header
     const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
     assert.equal(response.status, 202);
     assert.equal(maxActive, 2);
-    assert.equal(response.headers.get("x-llm-provider"), "anthropic");
+    assert.equal(response.headers.get("x-llm-provider"), process.env.LLM_PROVIDER || "gemini");
     assert.ok(response.headers.get("x-llm-model"));
     const processed = await response.json();
     assert.deepEqual([...new Set(processed.fields.map((field) => field.document))], application.documents.map((item) => item.document));

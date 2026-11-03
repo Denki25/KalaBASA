@@ -147,10 +147,18 @@ export class SupabaseStore extends MemoryStore {
   }
 }
 
+export function getSupabaseConfig(env = process.env) {
+  const url = typeof env.SUPABASE_URL === "string" ? env.SUPABASE_URL.trim() : "";
+  const key = typeof env.SUPABASE_SERVICE_KEY === "string" ? env.SUPABASE_SERVICE_KEY.trim() : "";
+  const missing = url && !key ? "SUPABASE_SERVICE_KEY" : key && !url ? "SUPABASE_URL" : null;
+  return { url, key, missing, enabled: Boolean(url && key) };
+}
+
 export function createStore(applications = [], env = process.env) {
-  const url = env.SUPABASE_URL;
-  const key = env.SUPABASE_SERVICE_KEY;
+  const { url, key, missing } = getSupabaseConfig(env);
   if (!url && !key) return new MemoryStore(applications);
-  if (!url || !key) throw new Error("Both SUPABASE_URL and SUPABASE_SERVICE_KEY are required to enable Supabase.");
+  if (missing) {
+    throw new Error(`${missing} is missing. Set both SUPABASE_URL and SUPABASE_SERVICE_KEY to enable Supabase, or clear both. In PowerShell, use Remove-Item Env:SUPABASE_URL and Remove-Item Env:SUPABASE_SERVICE_KEY to clear shell values; existing shell variables override values in .env.`);
+  }
   return new SupabaseStore(createClient(url, key), applications);
 }

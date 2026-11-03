@@ -34,7 +34,10 @@ export function getLlmConfig(env = process.env) {
   };
 }
 
-export function cacheKey({ document, pages, model = DEFAULT_MODEL, provider = "anthropic" }) {
+export function cacheKey({ document, pages, model, provider } = {}) {
+  const config = getLlmConfig();
+  model ??= config.model;
+  provider ??= config.provider;
   return createHash("sha256")
     .update(JSON.stringify({ document, pages, provider, model }))
     .digest("hex");

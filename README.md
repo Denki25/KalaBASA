@@ -24,6 +24,10 @@ For real use, create a Supabase project and run [backend/db/schema.sql](./backen
 
 To scan uploaded PDFs with AI, configure `GEMINI_API_KEY` and keep `MOCK_MODE=false`. The default provider is Gemini 3.6 Flash (`gemini-3.6-flash`). You can instead select Anthropic with `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`, or an OpenAI-compatible provider with `LLM_PROVIDER=openai-compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Extraction sends document text to the configured provider; review its data-handling terms before using real applications.
 
+## Troubleshooting
+
+If the API says a Supabase variable is missing, check whether it is already set in your PowerShell session with `$env:SUPABASE_URL` (and `$env:SUPABASE_SERVICE_KEY`). Clear stale values with `Remove-Item Env:SUPABASE_URL` or `Remove-Item Env:SUPABASE_SERVICE_KEY`. Variables already present in the shell override `.env`, so `.env` does not replace them.
+
 ## Tests
 
 ```powershell
