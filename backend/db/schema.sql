@@ -1,3 +1,15 @@
+-- Reviewer profiles are provisioned for Supabase Auth users by an administrator.
+-- The API reads these using the service key; browser clients must not read profiles directly.
+create table if not exists profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  full_name text not null,
+  role text not null check (role in ('viewer', 'reviewer', 'admin')),
+  lgu_id text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table profiles enable row level security;
+
 create table if not exists applications (
   id text primary key,
   lgu_id text not null,
