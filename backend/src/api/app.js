@@ -170,7 +170,7 @@ export function createApp({
   const llmConfig = getLlmConfig();
   const configuredConcurrency = Number.parseInt(process.env.LLM_MAX_CONCURRENCY ?? "", 10);
   const maxConcurrency = Math.max(1, llmMaxConcurrency
-    ?? (Number.isFinite(configuredConcurrency) ? configuredConcurrency : llmConfig.provider === "anthropic" ? 5 : 2));
+    ?? (Number.isFinite(configuredConcurrency) ? configuredConcurrency : llmConfig.provider === "anthropic" ? 5 : llmConfig.provider === "gemini" ? 3 : 2));
   app.set("trust proxy", 1);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const mutationRateLimit = createIpRateLimiter(Number.isFinite(rateLimitPer10Min) ? Math.max(0, rateLimitPer10Min) : 20);

@@ -34,13 +34,14 @@ Render supplies `PORT`; the Express server listens on it automatically.
 | Variable | Value / use |
 | --- | --- |
 | `GEMINI_API_KEY` | Required when `LLM_PROVIDER=gemini` (the default). Store as a secret. |
+| `GEMINI_THINKING_LEVEL` | Gemini reasoning level (`minimal`, `low`, `medium`, or `high`). Defaults to `minimal` for faster field extraction. |
 | `KALABASA_MODEL` | Gemini or Anthropic model identifier. Defaults to `gemini-3.6-flash` for Gemini and the contract default for Anthropic. |
 | `ANTHROPIC_API_KEY` | Required when `LLM_PROVIDER=anthropic`. Store as a secret. |
 | `LLM_PROVIDER` | Provider selector: `gemini` (default), `anthropic`, or `openai-compatible`. |
 | `LLM_BASE_URL` | Base URL for an OpenAI-compatible `/chat/completions` endpoint. |
 | `LLM_API_KEY` | API key for the selected OpenAI-compatible provider. Store as a secret. |
 | `LLM_MODEL` | Model name for the selected OpenAI-compatible provider. |
-| `LLM_MAX_CONCURRENCY` | Optional extraction concurrency override; defaults to 5 for Anthropic and 2 for other providers. |
+| `LLM_MAX_CONCURRENCY` | Optional extraction concurrency override; defaults to 5 for Anthropic, 3 for Gemini, and 2 for other providers. |
 | `SUPABASE_URL` | Supabase project URL. Set together with `SUPABASE_SERVICE_KEY` to enable Supabase storage. |
 | `SUPABASE_PUBLISHABLE_KEY` | Supabase publishable (formerly anon) key used by the login endpoint. |
 | `SUPABASE_SERVICE_KEY` | Supabase service-role key. Store as a secret; never expose it in frontend variables. |

@@ -142,7 +142,10 @@ export function createLlmClient({
                 system_instruction: request.system,
                 input: request.messages.map((message) => message.content).join("\n\n"),
                 response_format: { type: "text", mime_type: "application/json" },
-                generation_config: { max_output_tokens: request.max_tokens },
+                generation_config: {
+                  max_output_tokens: request.max_tokens,
+                  thinking_level: process.env.GEMINI_THINKING_LEVEL || "minimal",
+                },
               }),
               signal: AbortSignal.timeout(60000),
             });
