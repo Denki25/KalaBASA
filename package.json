@@ -10,7 +10,8 @@
   ],
 
   "scripts": {
-    "test:extraction": "node --env-file=.env backend/src/extraction/test.js",
+    "test:extraction": "node --env-file=.env backend/src/extraction/test.js && node --env-file=.env backend/src/extraction/cache.test.js",
+    "test:extraction:live": "node --env-file=.env backend/src/extraction/test.js --live",
     "test:ocr": "node --env-file=.env backend/src/extraction/ocr-test.js",
     "test:rules": "node --env-file=.env backend/src/rules/test.js",
     "test:api": "node --env-file=.env --test backend/src/api/test.js",
@@ -22,15 +23,7 @@
     "seed:sample-cache": "node --env-file=.env backend/src/extraction/seed-sample-cache.js",
     "start": "node --env-file=.env backend/src/api/server.js",
     "start:api": "node --env-file=.env backend/src/api/server.js",
-    "test:extraction": "node backend/src/extraction/test.js && node backend/src/extraction/cache.test.js",
-    "test:extraction:live": "node backend/src/extraction/test.js --live",
-    "test:ocr": "node backend/src/extraction/ocr-test.js",
-    "test:rules": "node backend/src/rules/test.js",
-    "test:api": "node --test backend/src/api/test.js",
-    "test:contract": "node contract/test.js ./samples",
-    "seed:sample-cache": "node backend/src/extraction/seed-sample-cache.js",
-    "start": "node backend/src/api/server.js",
-    "start:api": "node backend/src/api/server.js",
+    "check": "node scripts/check.js",
     "dev": "npm --workspace frontend run dev",
     "build": "npm --workspace frontend run build",
     "extract": "node --env-file=.env backend/src/extraction/run.js"

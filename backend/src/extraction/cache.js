@@ -185,6 +185,8 @@ async function writeCache(file, cache) {
 
 const cacheWriteQueues = new Map();
 
+const apiKeyName = (provider) => provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+
 async function writeCacheEntry(file, key, entry) {
   const previous = cacheWriteQueues.get(file) ?? Promise.resolve();
   const pending = previous.catch(() => {}).then(async () => {
@@ -200,55 +202,6 @@ async function writeCacheEntry(file, key, entry) {
   }
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const RETRY_STATUSES = new Set([429, 500, 503, 504]);
-
-// Calls the Gemini REST API. On temporary errors (too many requests, server busy),
-// wait and try again, up to 4 tries.
-async function callGemini({ apiKey, model, request }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: request.system }] },
-    contents: [{ role: "user", parts: [{ text: request.messages[0].content }] }],
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 4096,
-      responseMimeType: "application/json",
-    },
-  });
-
-  let lastError;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body,
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return (data.candidates?.[0]?.content?.parts ?? []).map((part) => part.text ?? "").join("");
-    }
-    lastError = new Error(`Gemini request failed (${res.status}): ${await res.text()}`);
-    if (!RETRY_STATUSES.has(res.status)) throw lastError;
-    await sleep(5000 * 2 ** attempt); // 5s, 10s, 20s
-  }
-  throw lastError;
-}
-
-function isValidJson(text) {
-  try {
-    JSON.parse(text.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function extractDocumentCached({ document, pages, method, model = DEFAULT_MODEL }) {
-  const key = cacheKey({ document, pages, model });
-  const cache = await readCache();
-  const entry = cache[key];
-  const apiKey = process.env.GEMINI_API_KEY;
 export async function extractDocumentCached({
   document,
   pages,
@@ -273,8 +226,14 @@ export async function extractDocumentCached({
   apiKey ??= config.apiKey;
   baseUrl ??= config.baseUrl;
   const key = cacheKey({ document, pages, model, provider });
-  const selectedCacheFile = live ? liveFile : cacheFile;
-  const cache = live ? {} : await readCacheFile(cacheFile);
+  // Keep responses from real provider calls out of the checked-in sample cache.
+  // Custom cache paths remain useful for isolated tests and local tooling.
+  const writesToLiveCache = live || (Boolean(apiKey) && cacheFile === seededCacheFile);
+  const selectedCacheFile = writesToLiveCache ? liveFile : cacheFile;
+  const cacheFiles = live ? [] : [...new Set([cacheFile, liveFile])];
+  const cacheContent = new Map(await Promise.all(cacheFiles.map(async (file) => [file, await readCacheFile(file)])));
+  // Seeded sample answers take precedence over prior live responses when both match.
+  const cache = live ? {} : Object.assign({}, cacheContent.get(liveFile), cacheContent.get(cacheFile));
   const entry = cache[key] ?? (provider === "anthropic"
     ? cache[legacyAnthropicCacheKey({ document, pages, model })]
     : undefined);
@@ -283,36 +242,18 @@ export async function extractDocumentCached({
   const client = {
     messages: {
       async create(request) {
-        // 1. Use the saved answer if we already have one.
-        if (entry) return { content: [{ type: "text", text: entry.text }] };
-
-        // 2. No saved answer and no key: we cannot continue.
-        if (!apiKey) {
-          throw new Error(`No cached extraction for ${document}; set GEMINI_API_KEY to call Gemini.`);
-        }
-
-        // 3. Ask Gemini, and save the answer only if it is valid JSON.
-        const text = await callGemini({ apiKey, model, request });
-        if (isValidJson(text)) {
-          cache[key] = { document, model, text };
-          await writeCache(cache);
-        }
-        return { content: [{ type: "text", text }] };
-      },
-    },
-  };
-
-  return extractDocument({ document, pages, method, client, model });
-}
-        if (!live && !apiKey) {
-          if (!entry) {
-            const keyName = provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
-            throw new Error(`No cached extraction for ${document}; set ${keyName} to call the configured provider.`);
-          }
+        if (!live && entry) {
           return { content: [{ type: "text", text: entry.text }] };
         }
 
-        if (!apiKey) throw new Error(`${provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY"} is required for live extraction.`);
+        if (!apiKey) {
+          if (!entry) {
+            const keyName = apiKeyName(provider);
+            const reason = live ? `${keyName} is required for live extraction.` : `No cached extraction for ${document}; set ${keyName} to call the configured provider.`;
+            throw new Error(reason);
+          }
+          return { content: [{ type: "text", text: entry.text }] };
+        }
         providerClient ??= clientFactory({
           provider,
           apiKey,
@@ -329,6 +270,7 @@ export async function extractDocumentCached({
       },
     },
   };
+
 
   try {
     return await extractDocument({ document, pages, method, client, model });

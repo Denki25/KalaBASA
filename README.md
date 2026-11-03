@@ -11,14 +11,14 @@ Copy-Item .env.example .env
 npm install
 ```
 
-By default, `.env.example` enables `MOCK_MODE=true`. Start the API and frontend in separate terminals:
+By default, `.env.example` enables `MOCK_MODE=true` and `AUTH_DISABLED=true`. Start the API and frontend in separate terminals:
 
 ```powershell
 npm run start:api
 npm run dev
 ```
 
-Open the Vite URL printed in the frontend terminal. Demo mode lets you load the supplied sample applications without an Anthropic API key.
+Open the Vite URL printed in the frontend terminal. Demo mode needs `AUTH_DISABLED=true` (login off) and lets you load the supplied sample applications without an API key. Real use needs the Supabase keys (`SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SERVICE_KEY`).
 
 For live extraction, set `MOCK_MODE=false` and `ANTHROPIC_API_KEY` in `.env`. Supabase is enabled when both `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are provided; apply [backend/db/schema.sql](./backend/db/schema.sql) first.
 
