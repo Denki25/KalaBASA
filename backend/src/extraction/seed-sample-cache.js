@@ -1,14 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_MODEL } from "kalabasa-contract/extraction.js";
-import { cacheKey } from "./cache.js";
+import { cacheKey, getLlmConfig } from "./cache.js";
 import { readPdfPages } from "./pdf.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const samplesRoot = path.join(repoRoot, "samples");
 const cachePath = path.join(repoRoot, "backend", ".cache", "extraction-responses.json");
 const cache = {};
+const { provider, model } = getLlmConfig();
+if (!model) throw new Error(`A model must be configured for ${provider} before seeding the sample cache.`);
 
 for (const setName of (await fs.readdir(samplesRoot)).filter((name) => /^set_0[1-5]/.test(name)).sort()) {
   const setPath = path.join(samplesRoot, setName);
@@ -27,9 +28,10 @@ for (const setName of (await fs.readdir(samplesRoot)).filter((name) => /^set_0[1
         source_text,
         confidence: "high",
       }));
-    cache[cacheKey({ document, pages, model: DEFAULT_MODEL })] = {
+    cache[cacheKey({ document, pages, model, provider })] = {
       document,
-      model: DEFAULT_MODEL,
+      provider,
+      model,
       text: JSON.stringify({ fields }),
       source: "sample ground truth",
     };

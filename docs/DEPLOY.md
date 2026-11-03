@@ -33,9 +33,10 @@ Render supplies `PORT`; the Express server listens on it automatically.
 
 | Variable | Value / use |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Required for live document extraction when `MOCK_MODE=false`. Store as a secret in Render. |
-| `KALABASA_MODEL` | Anthropic model identifier. Optional; defaults to the model configured in `contract/extraction.js`. |
-| `LLM_PROVIDER` | Optional provider selector: `anthropic` (default) or `openai-compatible`. |
+| `GEMINI_API_KEY` | Required when `LLM_PROVIDER=gemini` (the default). Store as a secret. |
+| `KALABASA_MODEL` | Gemini or Anthropic model identifier. Defaults to `gemini-3.6-flash` for Gemini and the contract default for Anthropic. |
+| `ANTHROPIC_API_KEY` | Required when `LLM_PROVIDER=anthropic`. Store as a secret. |
+| `LLM_PROVIDER` | Provider selector: `gemini` (default), `anthropic`, or `openai-compatible`. |
 | `LLM_BASE_URL` | Base URL for an OpenAI-compatible `/chat/completions` endpoint. |
 | `LLM_API_KEY` | API key for the selected OpenAI-compatible provider. Store as a secret. |
 | `LLM_MODEL` | Model name for the selected OpenAI-compatible provider. |
@@ -48,7 +49,7 @@ Render supplies `PORT`; the Express server listens on it automatically.
 | `RATE_LIMIT_PER_10MIN` | Maximum create/process POST requests per IP in ten minutes. Defaults to `20`. |
 | `DAILY_EXTRACTION_LIMIT` | Maximum live model calls per UTC day. Defaults to `200`; cached/mock extraction does not count. |
 
-When `MOCK_MODE=true`, the application workflow uses fixtures and does not call an LLM. For live Anthropic extraction, set `MOCK_MODE=false` and provide `ANTHROPIC_API_KEY`. For an OpenAI-compatible provider, also set `LLM_PROVIDER=openai-compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Supabase is optional; without both Supabase variables, the service uses in-memory metadata storage.
+When `MOCK_MODE=true`, the application workflow uses fixtures and does not call an LLM. For live Gemini extraction, set `MOCK_MODE=false` and provide `GEMINI_API_KEY`. Anthropic and OpenAI-compatible providers are also supported. Supabase is optional; without both Supabase URL and service key, the service uses in-memory metadata storage.
 
 Use `AUTH_DISABLED=false` and provision Supabase profiles for a real deployment. Keep `MOCK_MODE=true` on public demos; live extraction sends document text to the configured model provider. Use live mode only after configuring the provider key and reviewing its data-handling terms.
 

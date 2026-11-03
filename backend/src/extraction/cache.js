@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_MODEL, extractDocument } from "kalabasa-contract/extraction.js";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 export const seededCacheFile = path.join(backendRoot, ".cache", "extraction-responses.json");
 export const liveResponsesFile = path.join(backendRoot, ".cache", "live-responses.json");
 
@@ -16,17 +17,19 @@ export class DailyExtractionLimitError extends Error {
 }
 
 export function getLlmConfig(env = process.env) {
-  const provider = env.LLM_PROVIDER || "anthropic";
-  if (!new Set(["anthropic", "openai-compatible"]).has(provider)) {
+  const provider = env.LLM_PROVIDER || "gemini";
+  if (!new Set(["anthropic", "gemini", "openai-compatible"]).has(provider)) {
     throw new Error(`Unsupported LLM_PROVIDER: ${provider}`);
   }
   const model = provider === "openai-compatible"
     ? env.LLM_MODEL || ""
-    : env.KALABASA_MODEL || DEFAULT_MODEL;
+    : env.KALABASA_MODEL || (provider === "gemini" ? DEFAULT_GEMINI_MODEL : DEFAULT_MODEL);
   return {
     provider,
     model,
-    apiKey: provider === "openai-compatible" ? env.LLM_API_KEY : env.ANTHROPIC_API_KEY,
+    apiKey: provider === "openai-compatible"
+      ? env.LLM_API_KEY
+      : provider === "gemini" ? env.GEMINI_API_KEY : env.ANTHROPIC_API_KEY,
     baseUrl: env.LLM_BASE_URL,
   };
 }
@@ -56,6 +59,28 @@ function extractText(response) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map((part) => part.text ?? "").join("");
   throw new Error("LLM response did not contain message text.");
+}
+
+function extractGeminiText(response) {
+  const text = (response?.steps ?? [])
+    .filter((step) => step.type === "model_output")
+    .flatMap((step) => step.content ?? [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("");
+  if (text) return text;
+  if (typeof response?.output_text === "string") return response.output_text;
+  throw new Error("Gemini response did not contain model text.");
+}
+
+function retryDelayFromBody(body) {
+  try {
+    const payload = JSON.parse(body);
+    const info = payload?.error?.details?.find((detail) => detail["@type"]?.endsWith(".RetryInfo"));
+    return retryAfterMs(info?.retryDelay ?? payload?.error?.retryDelay);
+  } catch {
+    return null;
+  }
 }
 
 export function normalizeModelJson(text) {
@@ -92,6 +117,50 @@ export function createLlmClient({
 }) {
   let httpAttempts = 0;
   let terminalHttpError = null;
+  if (provider === "gemini") {
+    if (!apiKey) throw new Error("GEMINI_API_KEY is required for the gemini provider.");
+    return {
+      messages: {
+        async create(request) {
+          if (!request.model) throw new Error("KALABASA_MODEL is required for the gemini provider.");
+          if (terminalHttpError) throw terminalHttpError;
+          let response;
+          while (httpAttempts < 4) {
+            await onModelCall();
+            httpAttempts += 1;
+            response = await fetchImpl("https://generativelanguage.googleapis.com/v1beta/interactions", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-goog-api-key": apiKey,
+              },
+              body: JSON.stringify({
+                model: request.model,
+                system_instruction: request.system,
+                input: request.messages.map((message) => message.content).join("\n\n"),
+                response_format: { type: "text", mime_type: "application/json" },
+                generation_config: { max_output_tokens: request.max_tokens },
+              }),
+              signal: AbortSignal.timeout(60000),
+            });
+            if (response.ok) break;
+            const detail = await response.text().catch(() => "");
+            const retryable = response.status === 429 || response.status >= 500;
+            if (!retryable || httpAttempts === 4) {
+              terminalHttpError = new Error(`Gemini request failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+              throw terminalHttpError;
+            }
+            const delay = retryAfterMs(response.headers.get("retry-after"))
+              ?? retryDelayFromBody(detail)
+              ?? 250 * 2 ** (httpAttempts - 1);
+            await sleep(delay);
+          }
+          const payload = await response.json();
+          return { content: [{ type: "text", text: normalizeModelJson(extractGeminiText(payload)) }] };
+        },
+      },
+    };
+  }
   if (provider === "anthropic") {
     const anthropic = anthropicClientFactory(apiKey);
     return {
@@ -185,7 +254,9 @@ async function writeCache(file, cache) {
 
 const cacheWriteQueues = new Map();
 
-const apiKeyName = (provider) => provider === "openai-compatible" ? "LLM_API_KEY" : "ANTHROPIC_API_KEY";
+const apiKeyName = (provider) => provider === "openai-compatible"
+  ? "LLM_API_KEY"
+  : provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY";
 
 async function writeCacheEntry(file, key, entry) {
   const previous = cacheWriteQueues.get(file) ?? Promise.resolve();

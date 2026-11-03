@@ -22,7 +22,7 @@ Open the Vite URL printed in the frontend terminal. Demo mode needs `AUTH_DISABL
 
 For real use, create a Supabase project and run [backend/db/schema.sql](./backend/db/schema.sql) and [backend/db/storage.sql](./backend/db/storage.sql) in its SQL editor. Set `AUTH_DISABLED=false`, `MOCK_MODE=false`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SERVICE_KEY` in `.env`. Create reviewer accounts under Supabase **Authentication → Users**, then add one matching row to `public.profiles` with that user's UUID, a `full_name`, a role (`viewer`, `reviewer`, or `admin`), and an `lgu_id` such as `bagong-dalisay-demo`. The API rejects accounts without a valid profile. Keep the service key server-side only.
 
-To scan uploaded PDFs with AI, configure `ANTHROPIC_API_KEY` (or the OpenAI-compatible provider settings) and keep `MOCK_MODE=false`. Extraction uses the configured provider and sends document text to it; never upload real documents until you have reviewed your provider's data-handling terms.
+To scan uploaded PDFs with AI, configure `GEMINI_API_KEY` and keep `MOCK_MODE=false`. The default provider is Gemini 3.6 Flash (`gemini-3.6-flash`). You can instead select Anthropic with `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`, or an OpenAI-compatible provider with `LLM_PROVIDER=openai-compatible`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Extraction sends document text to the configured provider; review its data-handling terms before using real applications.
 
 ## Tests
 
