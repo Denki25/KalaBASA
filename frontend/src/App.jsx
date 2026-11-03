@@ -672,6 +672,7 @@ function App() {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
             <i />
           </button>
+          {session && <button className="signout-link" type="button" onClick={signOut}>Sign out</button>}
         </header>
       ) : reviewScreen ? (
         <header className="review-header">
@@ -684,6 +685,7 @@ function App() {
           </div>
           <span className={`review-header-status ${finalDecision ? "final" : ""}`}>{application?.status?.replaceAll("_", " ") ?? "No application"}</span>
           {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
+          {session && <button className="signout-link" type="button" onClick={signOut}>Sign out</button>}
         </header>
       ) : (
         <header className="topbar">
@@ -694,6 +696,7 @@ function App() {
           <div className="topbar-right">
             {MOCK_MODE && <span className="demo-badge"><span />Demo mode / mocked data</span>}
             <span className="reviewer-label">Reviewer workspace</span>
+            {session && <button className="signout-link" type="button" onClick={signOut}>Sign out</button>}
           </div>
         </header>
       )}
