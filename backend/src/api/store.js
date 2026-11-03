@@ -48,6 +48,16 @@ export class MemoryStore {
   async audit(entry) {
     this.auditLog.push(structuredClone(entry));
   }
+
+  async reportSnapshot(lguId, crossLgu = false, { from, to } = {}) {
+    const applications = [...this.applications.values()].filter((item) =>
+      (crossLgu || item.lgu_id === lguId)
+      && (!from || new Date(item.created_at) >= new Date(from))
+      && (!to || new Date(item.created_at) <= new Date(to)));
+    const ids = new Set(applications.map((item) => item.id));
+    const audit = this.auditLog.filter((entry) => ids.has(entry.application_id));
+    return structuredClone({ applications, audit });
+  }
 }
 
 export class SupabaseStore extends MemoryStore {
@@ -106,6 +116,27 @@ export class SupabaseStore extends MemoryStore {
       details: row.details ?? {},
       timestamp: row.created_at,
     }));
+  }
+
+  async reportSnapshot(lguId, crossLgu = false, { from, to } = {}) {
+    let query = this.client.from("applications").select("id,lgu_id,label,status,created_at");
+    if (!crossLgu) query = query.eq("lgu_id", lguId);
+    if (from) query = query.gte("created_at", from);
+    if (to) query = query.lte("created_at", to);
+    const applications = assertSupabase(await query);
+    const ids = applications.map((item) => item.id);
+    if (!ids.length) return { applications: [], documents: [], findings: [], audit: [] };
+    const [documents, findings, audit] = await Promise.all([
+      this.client.from("documents").select("application_id,method").in("application_id", ids),
+      this.client.from("findings").select("application_id,type,severity,status").in("application_id", ids),
+      this.client.from("audit_log").select("application_id,action,created_at").in("application_id", ids),
+    ]);
+    return {
+      applications,
+      documents: assertSupabase(documents),
+      findings: assertSupabase(findings),
+      audit: assertSupabase(audit).map((item) => ({ ...item, timestamp: item.created_at })),
+    };
   }
 
   async save(application) {

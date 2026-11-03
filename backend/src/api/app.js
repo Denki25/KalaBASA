@@ -12,7 +12,7 @@ import {
   nextOutcome,
 } from "kalabasa-contract/schemas.js";
 import { DailyExtractionLimitError, extractDocumentCached, getLlmConfig } from "../extraction/cache.js";
-import { readPdfPages } from "../extraction/pdf.js";
+import { readDocumentPages } from "../extraction/pdf.js";
 import { checkRequiredFields, checkRequirements, compareAcrossDocuments } from "../rules/index.js";
 import {
   ActivityResponse,
@@ -27,6 +27,8 @@ import { createStore } from "./store.js";
 import { readApplicationChecklist } from "./checklist.js";
 import { WRITE_ROLES, authMiddleware, currentActor } from "./auth.js";
 import { createLocalStorage } from "./documents.js";
+import { UploadValidationError, validateUploadFile } from "./upload-validation.js";
+import { buildReport } from "./reports.js";
 
 const apiDirectory = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(apiDirectory, "../..");
@@ -87,20 +89,6 @@ function createDailyModelCallGuard(limit) {
   };
 }
 
-async function mapWithConcurrency(items, limit, mapper) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(items.length, limit);
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index], index);
-    }
-  }));
-  return results;
-}
-
 function audit(store, application, action, details = {}) {
   return store.audit({
     application_id: application.id,
@@ -145,11 +133,14 @@ function activityText(entry) {
   }
 }
 
-function uploadedDocuments(application, readPdf, fileStorage) {
+function uploadedDocuments(application, readPdf, fileStorage, documentPages = new Map()) {
   const docs = application.documents.map((item) => item.document);
   const form = application.documents.find((item) => item.document === "application_form");
   if (!form) return docs;
-  return fileStorage.withFile(application.id, form.document, (filename) => readPdf(filename)).then(({ pages }) => [
+  const readForm = documentPages.has(form.document)
+    ? Promise.resolve(documentPages.get(form.document))
+    : fileStorage.withFile(application.id, form.document, (filename) => readPdf(filename), form.filename);
+  return readForm.then(({ pages }) => [
     { document: form.document, checklist: readApplicationChecklist(pages) },
     ...docs.filter((document) => document !== form.document),
   ]);
@@ -158,21 +149,18 @@ function uploadedDocuments(application, readPdf, fileStorage) {
 export function createApp({
   store = createStore(fixtureApplications),
   mockMode = process.env.MOCK_MODE === "true",
-  readPdf = readPdfPages,
+  readPdf = readDocumentPages,
   extractDocument = extractDocumentCached,
   auth = null,
   fileStorage = createLocalStorage(uploadRoot),
   rateLimitPer10Min = Number.parseInt(process.env.RATE_LIMIT_PER_10MIN ?? "20", 10),
   dailyExtractionLimit = Number.parseInt(process.env.DAILY_EXTRACTION_LIMIT ?? "200", 10),
-  llmMaxConcurrency,
 } = {}) {
   const app = express();
+  const extractionProgress = new Map();
   const llmConfig = getLlmConfig();
-  const configuredConcurrency = Number.parseInt(process.env.LLM_MAX_CONCURRENCY ?? "", 10);
-  const maxConcurrency = Math.max(1, llmMaxConcurrency
-    ?? (Number.isFinite(configuredConcurrency) ? configuredConcurrency : llmConfig.provider === "anthropic" ? 5 : llmConfig.provider === "gemini" ? 3 : 2));
   app.set("trust proxy", 1);
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 5 } });
   const mutationRateLimit = createIpRateLimiter(Number.isFinite(rateLimitPer10Min) ? Math.max(0, rateLimitPer10Min) : 20);
   const reserveDailyModelCall = createDailyModelCallGuard(Number.isFinite(dailyExtractionLimit) ? Math.max(0, dailyExtractionLimit) : 200);
   app.use(express.json({ limit: "1mb" }));
@@ -237,6 +225,10 @@ export function createApp({
     }
   });
 
+  app.get("/api/applications/:id/progress", (request, response) => {
+    return response.json(extractionProgress.get(request.params.id) ?? { documents: [] });
+  });
+
   app.get("/api/activity", async (request, response, next) => {
     try {
       const requestedLimit = Number(request.query.limit ?? 10);
@@ -283,6 +275,46 @@ export function createApp({
     }
   });
 
+  app.get("/api/reports", async (request, response, next) => {
+    try {
+      const period = {
+        from: request.query.from ? String(request.query.from) : undefined,
+        to: request.query.to ? String(request.query.to) : undefined,
+      };
+      buildReport({ applications: [], audit: [] }, period);
+      const previousPeriod = period.from && period.to ? (() => {
+        const start = new Date(period.from);
+        const end = new Date(period.to);
+        const duration = end.getTime() - start.getTime() + 1;
+        return { from: new Date(start.getTime() - duration).toISOString(), to: new Date(start.getTime() - 1).toISOString() };
+      })() : null;
+      const queryPeriod = previousPeriod ? { from: previousPeriod.from, to: period.to } : period;
+      const snapshot = await store.reportSnapshot(authEnabled ? request.user.lgu_id : requirements.lgu.id,
+        authEnabled && request.user.role === "admin", queryPeriod);
+      const report = buildReport(snapshot, period);
+      if (previousPeriod) {
+        const previous = buildReport(snapshot, previousPeriod);
+        const currentOpen = report.findings_by_status.open + report.findings_by_status.escalated;
+        const previousOpen = previous.findings_by_status.open + previous.findings_by_status.escalated;
+        report.comparison = {
+          application_total: report.application_total - previous.application_total,
+          under_review: report.applications_by_status.extracting + report.applications_by_status.ready_for_review
+            - previous.applications_by_status.extracting - previous.applications_by_status.ready_for_review,
+          ready_for_review: report.applications_by_status.ready_for_review - previous.applications_by_status.ready_for_review,
+          approved: report.applications_by_status.approved - previous.applications_by_status.approved,
+          returned: report.applications_by_status.returned - previous.applications_by_status.returned,
+          documents_total: report.documents_total - previous.documents_total,
+          findings_total: report.findings_total - previous.findings_total,
+          open_findings: currentOpen - previousOpen,
+        };
+      }
+      return response.json(report);
+    } catch (error) {
+      if (error.message === "Choose a valid reporting date range.") return sendError(response, 400, error.message);
+      return next(error);
+    }
+  });
+
   app.post("/api/applications", needWrite, mutationRateLimit, upload.array("files"), async (request, response, next) => {
     try {
       if (mockMode) {
@@ -299,15 +331,14 @@ export function createApp({
       const documentTypes = request.body.document_types ?? request.body["document_types[]"];
       const types = Array.isArray(documentTypes) ? documentTypes : documentTypes ? [documentTypes] : [];
       if (files.length === 0 || files.length !== types.length) {
-        return sendError(response, 400, "Upload one PDF per document_types[] entry.");
+        return sendError(response, 400, "Upload one supported file per document_types[] entry.");
       }
       const parsedTypes = types.map((type) => DocumentType.parse(type));
       if (new Set(parsedTypes).size !== parsedTypes.length) {
-        return sendError(response, 400, "Only one PDF per document type can be uploaded.");
+        return sendError(response, 400, "Only one file per document type can be uploaded.");
       }
-      if (files.some((file) => file.mimetype !== "application/pdf" && !file.originalname.toLowerCase().endsWith(".pdf"))) {
-        return sendError(response, 400, "Every uploaded document must be a PDF.");
-      }
+      const media = [];
+      for (const file of files) media.push(await validateUploadFile(file));
 
       const id = crypto.randomUUID();
       const documents = [];
@@ -315,11 +346,13 @@ export function createApp({
       try {
         for (let index = 0; index < files.length; index++) {
           const file = files[index];
-          await fileStorage.save(id, parsedTypes[index], file.buffer);
-          stored.push(parsedTypes[index]);
+          const safeFilename = path.win32.basename(path.basename(file.originalname ?? "")).replace(/[\u0000-\u001f\u007f]/g, "").trim()
+            || `${parsedTypes[index]}${media[index].extension}`;
+          await fileStorage.save(id, parsedTypes[index], file.buffer, safeFilename);
+          stored.push({ document: parsedTypes[index], filename: safeFilename });
           documents.push({
             document: parsedTypes[index],
-            filename: path.basename(file.originalname),
+            filename: safeFilename,
             pages: 1,
             method: "text_layer",
           });
@@ -343,6 +376,7 @@ export function createApp({
       await audit(store, application, "application_created");
       return sendParsed(response, CreateApplicationResponse, { id }, 201);
     } catch (error) {
+      if (error instanceof UploadValidationError) return sendError(response, 400, error.message);
       if (error instanceof Error && error.name === "ZodError") return sendError(response, 400, error.message);
       return next(error);
     }
@@ -356,6 +390,9 @@ export function createApp({
       application = await store.get(request.params.id);
       if (!application) return sendError(response, 404, "Application not found.");
       if (mockMode) {
+        extractionProgress.set(application.id, {
+          documents: application.documents.map((document) => ({ document: document.document, status: "complete" })),
+        });
         await audit(store, application, "application_processed", { mode: "mock" });
         return sendParsed(response, Application, application, 202);
       }
@@ -363,27 +400,50 @@ export function createApp({
       application.status = "extracting";
       await store.save(application);
       await audit(store, application, "extraction_started");
-      const fieldGroups = await mapWithConcurrency(application.documents, maxConcurrency, async (document) => {
-        const { pages, method } = await fileStorage.withFile(
-          application.id,
-          document.document,
-          (filePath) => readPdf(filePath),
-        );
-        document.pages = pages.length;
-        document.method = method;
-        return extractDocument({
-          document: document.document,
-          pages,
-          method,
-          live: true,
-          provider: llmConfig.provider,
-          model: llmConfig.model,
-          onModelCall: reserveDailyModelCall,
-        });
-      });
+      const progress = application.documents.map((document, index) => ({
+        document: document.document,
+        status: index === 0 ? "reading" : "queued",
+      }));
+      extractionProgress.set(application.id, { documents: progress });
+      const fieldGroups = [];
+      const documentPages = new Map();
+      for (let index = 0; index < application.documents.length; index += 1) {
+        const document = application.documents[index];
+        progress[index].status = "reading";
+        extractionProgress.set(application.id, { documents: progress.map((item) => ({ ...item })) });
+        try {
+          const { pages, method } = await fileStorage.withFile(
+            application.id,
+            document.document,
+            (filePath) => readPdf(filePath),
+            document.filename,
+          );
+          documentPages.set(document.document, { pages, method });
+          document.pages = pages.length;
+          document.method = method;
+          progress[index].status = "checking";
+          extractionProgress.set(application.id, { documents: progress.map((item) => ({ ...item })) });
+          fieldGroups.push(await extractDocument({
+            document: document.document,
+            pages,
+            method,
+            live: true,
+            provider: llmConfig.provider,
+            model: llmConfig.model,
+            onModelCall: reserveDailyModelCall,
+          }));
+          progress[index].status = "complete";
+          if (index + 1 < progress.length) progress[index + 1].status = "reading";
+          extractionProgress.set(application.id, { documents: progress.map((item) => ({ ...item })) });
+        } catch (error) {
+          progress[index].status = "failed";
+          extractionProgress.set(application.id, { documents: progress.map((item) => ({ ...item })) });
+          throw error;
+        }
+      }
       const allFields = fieldGroups.flat();
       application.fields = allFields;
-      const uploaded = await uploadedDocuments(application, readPdf, fileStorage);
+      const uploaded = await uploadedDocuments(application, readPdf, fileStorage, documentPages);
       application.findings = [
         ...checkRequirements(uploaded, requirements),
         ...checkRequiredFields(allFields, requirements),
@@ -479,8 +539,9 @@ export function createApp({
   app.use((error, request, response, next) => {
     if (response.headersSent) return next(error);
     if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
-      return sendError(response, 400, "Each PDF must be 20 MB or smaller.");
+      return sendError(response, 400, "PDF files must be 20 MB or smaller; image files must be 10 MB or smaller.");
     }
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_COUNT") return sendError(response, 400, "Upload up to 5 documents at a time.");
     console.error(error);
     return sendError(response, 500, "The request could not be completed.");
   });

@@ -10,7 +10,7 @@ const envFile = path.join(repoRoot, ".env");
 // silently turn authentication or real extraction off.
 if (fs.existsSync(envFile)) {
   const localEnv = parseEnv(fs.readFileSync(envFile, "utf8"));
-  for (const name of ["AUTH_DISABLED", "MOCK_MODE"]) {
+  for (const name of ["AUTH_DISABLED", "MOCK_MODE", "LLM_PROVIDER", "KALABASA_MODEL", "GEMINI_THINKING_LEVEL"]) {
     if (localEnv[name] !== undefined) process.env[name] = localEnv[name];
   }
 }

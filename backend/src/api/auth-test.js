@@ -50,7 +50,7 @@ test("health and LGU requirements are public; everything else needs a token", as
   await withApi(async (call) => {
     assert.equal((await call("/api/health")).status, 200);
     assert.equal((await call("/api/lgus/bagong-dalisay-demo/requirements")).status, 200);
-    for (const url of ["/api/applications", "/api/activity", "/api/stats", "/api/applications/app-lgu-a", "/api/auth/me"]) {
+    for (const url of ["/api/applications", "/api/activity", "/api/stats", "/api/reports", "/api/applications/app-lgu-a", "/api/auth/me"]) {
       assert.equal((await call(url)).status, 401, url);
     }
     assert.equal((await call("/api/applications", "not-a-real-token")).status, 401);
@@ -86,6 +86,20 @@ test("each LGU only sees its own applications; admin sees all", async () => {
     assert.equal((await call("/api/applications/app-lgu-b", "tok-a")).status, 404);
     assert.equal((await call("/api/applications/app-lgu-a", "tok-b")).status, 404);
     assert.equal((await call("/api/applications/app-lgu-b", "tok-admin")).status, 200);
+  });
+});
+
+test("reports are authenticated and restricted to the user's LGU; admin can see all", async () => {
+  await withApi(async (call) => {
+    const own = await (await call("/api/reports", "tok-a")).json();
+    const other = await (await call("/api/reports", "tok-b")).json();
+    const admin = await (await call("/api/reports", "tok-admin")).json();
+    assert.equal(own.application_total, 1);
+    assert.deepEqual(own.applications.map((item) => item.id), ["app-lgu-a"]);
+    assert.equal(other.application_total, 1);
+    assert.deepEqual(other.applications.map((item) => item.id), ["app-lgu-b"]);
+    assert.equal(admin.application_total, 2);
+    assert.equal((await call("/api/reports?from=bad", "tok-a")).status, 400);
   });
 });
 

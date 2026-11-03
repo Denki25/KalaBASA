@@ -2,8 +2,8 @@
 
 ## Real implementation
 
-- Uploaded PDFs are read with PDF.js. Pages with fewer than 24 non-whitespace text characters are rendered with `@napi-rs/canvas` and recognized with Tesseract.js.
-- With `MOCK_MODE=false`, extraction uses Gemini by default (`GEMINI_API_KEY`, `LLM_PROVIDER=gemini`, `KALABASA_MODEL`) through the Gemini Interactions API. Anthropic and OpenAI-compatible providers are also supported. The application code verifies each returned snippet with `verifyField()`.
+- Uploaded PDFs are read with PDF.js. Pages with fewer than 24 non-whitespace text characters are rendered with `@napi-rs/canvas` and recognized with Tesseract.js. JPG, JPEG, and PNG uploads are decoded and OCR-processed directly by Tesseract.js as page 1.
+- With `MOCK_MODE=false`, extraction uses Gemini Flash-Lite by default (`GEMINI_API_KEY`, `LLM_PROVIDER=gemini`, `KALABASA_MODEL=gemini-3.5-flash-lite`) through the Gemini Interactions API. Anthropic and OpenAI-compatible providers are also supported. The application code verifies each returned snippet with `verifyField()`.
 - The real application process passes `live: true` to extraction, so it calls the configured model for each uploaded document and bypasses seeded sample answers. Offline extraction scripts may use cached or seeded responses; these are not live AI results.
 - The rules engine is deterministic code. It checks uploaded required documents, required fields, and configured cross-document comparisons; it does not ask the LLM to decide findings.
 - When a required value or document has no printed snippet, findings carry `source_text: null` plus an explanatory evidence note instead of fabricated source text. Extracted fields distinguish `printed`, `blank_printed`, and `not_found`.
@@ -19,12 +19,12 @@
 - All LGUs currently share one requirements file (`samples/lgu_requirements.json`), so access is LGU-specific but the review rules are not.
 - Home statistics and recent activity are computed from stored applications and audit-log timestamps; in mock mode they are seeded from the fixture applications.
 - When both Supabase credentials are configured, application metadata, documents, fields, findings, and audit entries are stored through the Supabase client. The SQL schema is in `backend/db/schema.sql`.
-- Real uploaded PDFs are stored in the private Supabase Storage bucket `application-documents` (created by `backend/db/storage.sql`; no public access, only the backend secret key can read it). When Supabase is not configured, they fall back to `backend/.cache/uploads/` on the API host. Applications uploaded before this change stay in the local folder and cannot be re-processed from Supabase.
+- Real uploaded PDFs and images are stored in the private Supabase Storage bucket `application-documents` (created by `backend/db/storage.sql`; no public access, only the backend secret key can read it). When Supabase is not configured, they fall back to `backend/.cache/uploads/` on the API host. Existing Supabase projects must apply the updated bucket MIME allowlist from `backend/db/storage.sql` before image uploads will be accepted. Applications uploaded before this change stay in the local folder and cannot be re-processed from Supabase.
 
 ## Mocked or unverified behavior
 
-- With `MOCK_MODE=true`, create/process flows use the full application fixtures under `contract/fixtures/`; no PDF is processed and no LLM is called.
+- With `MOCK_MODE=true`, create/process flows use the full application fixtures under `contract/fixtures/`; no uploaded document is processed and no LLM is called.
 - `npm run seed:sample-cache` creates offline response-cache entries from each sample set's `expected.json`. Therefore `npm run test:extraction` without a live, previously cached Anthropic response checks cache wiring and output agreement, not independent LLM accuracy. The seeded set 05 data contains a null `notarization_date` and the leased-premises `business_address`.
 - The live Anthropic request path has not been validated with a production API credential in this workspace.
 - Supabase behavior is implemented but has not been exercised against a configured Supabase project. Without Supabase credentials the API uses its in-memory store.
-- Uploaded PDFs are local to the API host; durable remote file storage and production deployment configuration are not included.
+- Uploaded PDF and image files are local to the API host when Supabase is not configured; durable remote file storage and production deployment configuration are not included.

@@ -41,7 +41,7 @@ if (demoMode) {
   }
 }
 
-// With Supabase settings, PDFs go to the private bucket. Without them, they stay on this computer.
+// With Supabase settings, documents go to the private bucket. Without them, they stay on this computer.
 let fileStorage;
 if (supabaseConfig.enabled && !(demoMode && partialSupabaseConfig)) {
   const client = createClient(supabaseConfig.url, supabaseConfig.key, {
@@ -50,10 +50,10 @@ if (supabaseConfig.enabled && !(demoMode && partialSupabaseConfig)) {
   fileStorage = createSupabaseStorage(client);
   console.log("Documents are stored in the private Supabase bucket.");
 } else {
-  console.warn("WARNING: Supabase is not set up, so PDFs are saved on this computer only (backend/.cache/uploads).");
+  console.warn("WARNING: Supabase is not set up, so uploaded documents are saved on this computer only (backend/.cache/uploads).");
 }
 const app = createApp({ store, auth, ...(fileStorage ? { fileStorage } : {}) });
 
 app.listen(port, () => {
-  console.log(`KalaBASA API listening on http://localhost:${port} (MOCK_MODE=${process.env.MOCK_MODE === "true"})`);
+  console.log(`KalaBASA API listening on http://localhost:${port} (MOCK_MODE=${process.env.MOCK_MODE === "true"}, LLM_PROVIDER=${process.env.LLM_PROVIDER || "gemini"}, KALABASA_MODEL=${process.env.KALABASA_MODEL || "gemini-3.5-flash-lite"})`);
 });

@@ -7,6 +7,20 @@ import test from "node:test";
 import { createApp } from "./app.js";
 import { MemoryStore } from "./store.js";
 import { createLocalStorage, createSupabaseStorage } from "./documents.js";
+import { createCanvas } from "@napi-rs/canvas";
+
+const samplePdf = await fs.readFile(new URL("../../../samples/set_01_clean/application_form.pdf", import.meta.url));
+
+function imageBytes(type) {
+  const canvas = createCanvas(240, 100);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "white";
+  context.fillRect(0, 0, 240, 100);
+  context.fillStyle = "black";
+  context.font = "24px Arial";
+  context.fillText("TEST DOCUMENT", 12, 56);
+  return canvas.toBuffer(type);
+}
 
 // A tiny pretend Supabase Storage client that keeps files in memory.
 function fakeSupabaseClient() {
@@ -95,9 +109,9 @@ test("upload then process works end to end using private storage only", async ()
     const form = new FormData();
     form.append("label", "Storage test");
     form.append("document_types[]", "application_form");
-    form.append("files", new Blob(["FORM-PDF"], { type: "application/pdf" }), "form.pdf");
+    form.append("files", new Blob([samplePdf], { type: "application/pdf" }), "form.pdf");
     form.append("document_types[]", "dti_certificate");
-    form.append("files", new Blob(["DTI-PDF"], { type: "application/pdf" }), "dti.pdf");
+    form.append("files", new Blob([samplePdf], { type: "application/pdf" }), "dti.pdf");
     const created = await fetch(`${base}/api/applications`, { method: "POST", body: form });
     assert.equal(created.status, 201);
     const { id } = await created.json();
@@ -107,7 +121,7 @@ test("upload then process works end to end using private storage only", async ()
 
     const processed = await fetch(`${base}/api/applications/${id}/process`, { method: "POST" });
     assert.equal(processed.status, 202);
-    assert.ok(seen.includes("FORM-PDF") && seen.includes("DTI-PDF"), "processing read the stored copies");
+    assert.ok(seen.some((text) => text.includes("%PDF-")), "processing read the stored PDF copies");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
@@ -131,12 +145,130 @@ test("a failed upload removes the files that were already stored", async () => {
   try {
     const form = new FormData();
     form.append("document_types[]", "application_form");
-    form.append("files", new Blob(["A"], { type: "application/pdf" }), "a.pdf");
+    form.append("files", new Blob([samplePdf], { type: "application/pdf" }), "a.pdf");
     form.append("document_types[]", "dti_certificate");
-    form.append("files", new Blob(["B"], { type: "application/pdf" }), "b.pdf");
+    form.append("files", new Blob([samplePdf], { type: "application/pdf" }), "b.pdf");
     const response = await fetch(`${base}/api/applications`, { method: "POST", body: form });
     assert.ok(response.status >= 400);
-    assert.equal(client.buckets.get("application-documents").size, 0);
+    assert.equal(client.buckets.get("application-documents")?.size ?? 0, 0);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("valid JPG, JPEG, and PNG uploads can be selected together, stored privately, and processed as OCR pages", async () => {
+  const client = fakeSupabaseClient();
+  const fileStorage = createSupabaseStorage(client);
+  const readPaths = [];
+  const app = createApp({
+    store: new MemoryStore([]),
+    mockMode: false,
+    fileStorage,
+    readPdf: async (filename) => {
+      readPaths.push(path.extname(filename));
+      return { pages: [`OCR text from ${path.extname(filename)}`], method: "ocr" };
+    },
+    extractDocument: async ({ document, pages, method }) => {
+      assert.equal(method, "ocr");
+      assert.match(pages[0], /OCR text/);
+      const field = { application_form: "owner_name", dti_certificate: "dti_registration_no", barangay_clearance: "clearance_no" }[document];
+      return [{ field, value: "Sample Applicant", document, page: 1, source_text: "Sample Applicant", presence: "printed", confidence: "high", verified: true, match: "exact", method: "ocr" }];
+    },
+  });
+  const server = createServer(app);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const form = new FormData();
+    for (const [document, filename, type, bytes] of [
+      ["application_form", "application.jpg", "image/jpeg", imageBytes("image/jpeg")],
+      ["dti_certificate", "dti.jpeg", "image/jpeg", imageBytes("image/jpeg")],
+      ["barangay_clearance", "clearance.png", "image/png", imageBytes("image/png")],
+    ]) {
+      form.append("document_types[]", document);
+      form.append("files", new Blob([bytes], { type }), filename);
+    }
+    const created = await fetch(`${base}/api/applications`, { method: "POST", body: form });
+    assert.equal(created.status, 201, JSON.stringify(await created.clone().json()));
+    const { id } = await created.json();
+    const stored = client.buckets.get("application-documents");
+    assert.deepEqual([...stored.keys()].sort(), [`${id}/application_form.jpg`, `${id}/barangay_clearance.png`, `${id}/dti_certificate.jpeg`].sort());
+    assert.equal(stored.get(`${id}/application_form.jpg`).contentType, "image/jpeg");
+    assert.equal(stored.get(`${id}/barangay_clearance.png`).contentType, "image/png");
+
+    const processed = await fetch(`${base}/api/applications/${id}/process`, { method: "POST" });
+    assert.equal(processed.status, 202, JSON.stringify(await processed.clone().json()));
+    const application = await processed.json();
+    assert.deepEqual(readPaths.sort(), [".jpeg", ".jpg", ".png"]);
+    assert.deepEqual(application.documents.map(({ pages, method }) => [pages, method]), [[1, "ocr"], [1, "ocr"], [1, "ocr"]]);
+    assert.ok(application.fields.every((field) => field.method === "ocr" && field.page === 1 && field.source_text && field.verified));
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("uploads reject mismatched signatures, unsupported extensions, corrupted images, and oversized images", async () => {
+  const client = fakeSupabaseClient();
+  const server = createServer(createApp({ store: new MemoryStore([]), mockMode: false, fileStorage: createSupabaseStorage(client) }));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  async function upload(filename, type, bytes) {
+    const form = new FormData();
+    form.append("document_types[]", "application_form");
+    form.append("files", new Blob([bytes], { type }), filename);
+    return fetch(`${base}/api/applications`, { method: "POST", body: form });
+  }
+  try {
+    const badExtension = await upload("document.txt", "image/png", imageBytes("image/png"));
+    assert.equal(badExtension.status, 400);
+    assert.match((await badExtension.json()).error, /Unsupported file type/);
+    const badSignature = await upload("fake.png", "image/png", Buffer.from("not really a PNG"));
+    assert.equal(badSignature.status, 400);
+    assert.match((await badSignature.json()).error, /does not match/);
+    const badPdfSignature = await upload("fake.pdf", "application/pdf", Buffer.from("not really a PDF"));
+    assert.equal(badPdfSignature.status, 400);
+    assert.match((await badPdfSignature.json()).error, /valid PDF/);
+    const corrupt = await upload("broken.jpg", "image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0, 100, 0, 100, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xff, 0xd9]));
+    assert.equal(corrupt.status, 400);
+    assert.match((await corrupt.json()).error, /corrupted|decode/i);
+    const oversizedDimensions = imageBytes("image/png");
+    oversizedDimensions.writeUInt32BE(10000, 16);
+    oversizedDimensions.writeUInt32BE(10000, 20);
+    const tooManyPixels = await upload("huge.png", "image/png", oversizedDimensions);
+    assert.equal(tooManyPixels.status, 400);
+    assert.match((await tooManyPixels.json()).error, /dimensions are too large/);
+    const oversized = await upload("large.png", "image/png", Buffer.alloc(10 * 1024 * 1024 + 1));
+    assert.equal(oversized.status, 400);
+    assert.match((await oversized.json()).error, /10 MB/);
+    assert.equal(client.buckets.get("application-documents")?.size ?? 0, 0);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("an image OCR failure marks processing failed and leaves the application retryable", async () => {
+  const store = new MemoryStore([]);
+  const server = createServer(createApp({
+    store,
+    mockMode: false,
+    readPdf: async () => { throw new Error("Could not extract readable text from the uploaded image."); },
+    extractDocument: async () => { assert.fail("model extraction must not run when image OCR fails"); },
+  }));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const form = new FormData();
+    form.append("document_types[]", "application_form");
+    form.append("files", new Blob([imageBytes("image/png")], { type: "image/png" }), "application.png");
+    const created = await fetch(`${base}/api/applications`, { method: "POST", body: form });
+    assert.equal(created.status, 201);
+    const { id } = await created.json();
+    const process = await fetch(`${base}/api/applications/${id}/process`, { method: "POST" });
+    assert.equal(process.status, 500);
+    assert.match((await process.json()).error, /Could not extract readable text/);
+    assert.equal((await store.get(id)).status, "uploaded");
+    const progress = await fetch(`${base}/api/applications/${id}/progress`).then((response) => response.json());
+    assert.equal(progress.documents[0].status, "failed");
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

@@ -13,6 +13,7 @@
     "test:extraction": "node --env-file=.env backend/src/extraction/test.js && node --env-file=.env backend/src/extraction/cache.test.js",
     "test:extraction:live": "node --env-file=.env backend/src/extraction/test.js --live",
     "test:ocr": "node --env-file=.env backend/src/extraction/ocr-test.js",
+    "test:scanner": "node frontend/src/scanner/scanner-utils.test.js",
     "test:rules": "node --env-file=.env backend/src/rules/test.js",
     "test:api": "node --env-file=.env --test backend/src/api/test.js",
     "test:auth": "node --env-file=.env --test backend/src/api/auth-test.js",

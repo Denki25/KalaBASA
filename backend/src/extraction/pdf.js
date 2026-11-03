@@ -49,3 +49,26 @@ export async function readPdfPages(file) {
 
   return { pages, method: "ocr" };
 }
+
+export async function readImagePages(file) {
+  const data = await import("node:fs/promises").then(({ readFile }) => readFile(file));
+  const worker = await createWorker("eng", undefined, {
+    cachePath: path.join(backendRoot, ".cache", "tesseract"),
+  });
+  try {
+    const result = await worker.recognize(data);
+    const text = result.data.text.replace(/\s+/g, " ").trim();
+    if (!text) throw new Error("The image contains no readable text.");
+    return { pages: [text], method: "ocr" };
+  } catch {
+    throw new Error("Could not extract readable text from the uploaded image.");
+  } finally {
+    await worker.terminate();
+  }
+}
+
+export async function readDocumentPages(file) {
+  const extension = path.extname(file).toLowerCase();
+  if ([".jpg", ".jpeg", ".png"].includes(extension)) return readImagePages(file);
+  return readPdfPages(file);
+}

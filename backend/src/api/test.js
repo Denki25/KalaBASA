@@ -142,11 +142,11 @@ test("upload rejects files larger than 20 MB with a clear 400", async () => {
     form.append("files", new Blob([Buffer.alloc(20 * 1024 * 1024 + 1)], { type: "application/pdf" }), "oversized.pdf");
     const response = await fetch(`${baseUrl}/api/applications`, { method: "POST", body: form });
     assert.equal(response.status, 400);
-    assert.equal((await response.json()).error, "Each PDF must be 20 MB or smaller.");
+    assert.match((await response.json()).error, /PDF files must be 20 MB or smaller/);
   });
 });
 
-test("processing extracts documents in parallel in document order and can retry after failure", async () => {
+test("processing extracts documents sequentially in document order and can retry after failure", async () => {
   const application = Application.parse({
     ...cleanFixture,
     id: "app-parallel-retry-test",
@@ -189,12 +189,12 @@ test("processing extracts documents in parallel in document order and can retry 
     assert.equal(retried.status, 202);
     const processed = await retried.json();
     assert.equal(processed.status, "ready_for_review");
-    assert.equal(maxConcurrentExtractions, 2);
+    assert.equal(maxConcurrentExtractions, 1);
     assert.deepEqual(processed.fields.map((field) => field.document), ["application_form", "dti_certificate"]);
   }, application, appOptions);
 });
 
-test("processing limits extraction concurrency and returns provider/model headers", async () => {
+test("processing checks documents sequentially and returns provider/model headers", async () => {
   const application = Application.parse({
     ...cleanFixture,
     id: "bounded-concurrency-test",
@@ -221,7 +221,7 @@ test("processing limits extraction concurrency and returns provider/model header
   await withApi(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
     assert.equal(response.status, 202);
-    assert.equal(maxActive, 2);
+    assert.equal(maxActive, 1);
     assert.equal(response.headers.get("x-llm-provider"), process.env.LLM_PROVIDER || "gemini");
     assert.ok(response.headers.get("x-llm-model"));
     const processed = await response.json();

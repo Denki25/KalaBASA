@@ -35,7 +35,7 @@ Render supplies `PORT`; the Express server listens on it automatically.
 | --- | --- |
 | `GEMINI_API_KEY` | Required when `LLM_PROVIDER=gemini` (the default). Store as a secret. |
 | `GEMINI_THINKING_LEVEL` | Gemini reasoning level (`minimal`, `low`, `medium`, or `high`). Defaults to `minimal` for faster field extraction. |
-| `KALABASA_MODEL` | Gemini or Anthropic model identifier. Defaults to `gemini-3.6-flash` for Gemini and the contract default for Anthropic. |
+| `KALABASA_MODEL` | Gemini or Anthropic model identifier. Defaults to `gemini-3.5-flash-lite` for Gemini and the contract default for Anthropic. |
 | `ANTHROPIC_API_KEY` | Required when `LLM_PROVIDER=anthropic`. Store as a secret. |
 | `LLM_PROVIDER` | Provider selector: `gemini` (default), `anthropic`, or `openai-compatible`. |
 | `LLM_BASE_URL` | Base URL for an OpenAI-compatible `/chat/completions` endpoint. |
@@ -57,5 +57,5 @@ Use `AUTH_DISABLED=false` and provision Supabase profiles for a real deployment.
 ## Operational warnings
 
 - **Free-tier cold starts can exceed the splash timeout.** The splash gives the requirements request up to 8 seconds, then shows “Can't reach the server” with Retry. A sleeping free-tier service may take longer to wake, so reviewers may need to retry. The splash's 1.5-second minimum is cosmetic; the health/requirements checks are real.
-- **Uploaded PDFs are lost on redeploy/restart.** The service currently writes PDFs to `backend/.cache/uploads/` on the instance filesystem. That storage is ephemeral and is not copied to Supabase Storage. Do not use real personal documents in this deployment until durable private file storage and retention controls are implemented.
+- **Uploaded PDF and image files are lost on redeploy/restart without Supabase.** The service writes them to `backend/.cache/uploads/` on the instance filesystem. That storage is ephemeral and is not copied to Supabase Storage. Do not use real personal documents in this deployment until durable private file storage and retention controls are implemented.
 - The `/api/health` endpoint only verifies that the Express process responds; it does not check Anthropic or Supabase connectivity.

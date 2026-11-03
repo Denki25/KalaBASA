@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_MODEL, extractDocument } from "kalabasa-contract/extraction.js";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 export const seededCacheFile = path.join(backendRoot, ".cache", "extraction-responses.json");
 export const liveResponsesFile = path.join(backendRoot, ".cache", "live-responses.json");
 
