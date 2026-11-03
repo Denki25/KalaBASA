@@ -283,8 +283,7 @@ export function createApp({
     }
   });
 
-  app.post("/api/applications", needWrite, upload.array("files"), async (request, response, next) => {
-  app.post("/api/applications", mutationRateLimit, upload.array("files"), async (request, response, next) => {
+  app.post("/api/applications", needWrite, mutationRateLimit, upload.array("files"), async (request, response, next) => {
     try {
       if (mockMode) {
         const fixture = fixtureApplications.find((item) =>
@@ -364,11 +363,12 @@ export function createApp({
       application.status = "extracting";
       await store.save(application);
       await audit(store, application, "extraction_started");
-      const fieldGroups = await Promise.all(application.documents.map(async (document) => {
-        const { pages, method } = await fileStorage.withFile(application.id, document.document, (filePath) => readPdf(filePath));
       const fieldGroups = await mapWithConcurrency(application.documents, maxConcurrency, async (document) => {
-        const filePath = path.join(uploadRoot, application.id, `${document.document}.pdf`);
-        const { pages, method } = await readPdf(filePath);
+        const { pages, method } = await fileStorage.withFile(
+          application.id,
+          document.document,
+          (filePath) => readPdf(filePath),
+        );
         document.pages = pages.length;
         document.method = method;
         return extractDocument({

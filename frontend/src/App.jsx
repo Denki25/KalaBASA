@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import logo from "../../design/splash/KalaBASA (4).png";
 
 const MOCK_MODE = import.meta.env.MOCK_MODE === true;
+const AUTH_DISABLED = import.meta.env.AUTH_DISABLED === true;
 
 // ---- Login session (kept only for this browser tab) ----
 const SESSION_KEY = "kalabasa-session";
@@ -610,7 +611,7 @@ function App() {
     );
   }
 
-  if (!session) {
+  if (!session && !AUTH_DISABLED) {
     return (
       <main className="login-screen">
         <div className="login-decoration login-decoration-top" aria-hidden="true" />
@@ -655,7 +656,7 @@ function App() {
   }
 
   if (screen === "Home") {
-    return <HomeScreen onUpload={() => setScreen("Upload")} onOpenApplication={openApplication} user={session.user} onSignOut={signOut} />;
+    return <HomeScreen onUpload={() => setScreen("Upload")} onOpenApplication={openApplication} user={session?.user ?? null} onSignOut={signOut} />;
   }
 
   return (
