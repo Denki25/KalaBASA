@@ -1,7 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
 import { Application } from "kalabasa-contract/schemas.js";
 
+export class DatabaseMigrationRequiredError extends Error {
+  constructor() {
+    super("The database needs an update. Run backend/db/verification.sql in the Supabase SQL Editor, then retry the upload.");
+    this.name = "DatabaseMigrationRequiredError";
+  }
+}
+
 function assertSupabase(result) {
+  if (["42703", "PGRST204"].includes(result.error?.code)
+    && /verifications/i.test(result.error.message ?? "")) {
+    throw new DatabaseMigrationRequiredError();
+  }
   if (result.error) throw new Error(`Supabase request failed: ${result.error.message}`);
   return result.data;
 }
@@ -20,16 +31,24 @@ export class MemoryStore {
     return application ? structuredClone(application) : null;
   }
 
-  async list() {
-    return [...this.applications.values()].map((application) => ({
+  async list(lguId) {
+    return [...this.applications.values()]
+      .filter((application) => !lguId || application.lgu_id === lguId)
+      .map((application) => ({
       id: application.id,
       lgu_id: application.lgu_id,
       label: application.label,
+      business_name: application.fields.find((field) => field.field === "business_name")?.value ?? null,
+      owner_name: application.fields.find((field) => field.field === "owner_name")?.value ?? null,
+      finding_summary: (() => {
+        const finding = application.findings.find((item) => item.status === "open" || item.status === "escalated");
+        return finding ? `${finding.field.replaceAll("_", " ")}: ${finding.message}`.slice(0, 160) : null;
+      })(),
       status: application.status,
       created_at: application.created_at,
       open_findings: application.findings.filter((finding) => finding.status === "open" || finding.status === "escalated").length,
       total_findings: application.findings.length,
-    })).sort((left, right) => right.created_at.localeCompare(left.created_at));
+      })).sort((left, right) => right.created_at.localeCompare(left.created_at));
   }
 
   async recentAudit(limit = 10) {
@@ -37,6 +56,12 @@ export class MemoryStore {
     return structuredClone(this.auditLog)
       .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
       .slice(0, safeLimit);
+  }
+
+  async applicationHistory(id) {
+    return structuredClone(this.auditLog
+      .filter((entry) => entry.application_id === id)
+      .sort((left, right) => left.timestamp.localeCompare(right.timestamp)));
   }
 
   async save(application) {
@@ -66,12 +91,12 @@ export class SupabaseStore extends MemoryStore {
     this.client = client;
   }
 
-  async get(id) {
-    const cached = await super.get(id);
+  async get(id, { fresh = false } = {}) {
+    const cached = fresh ? null : await super.get(id);
     if (cached) return cached;
 
     const row = assertSupabase(await this.client.from("applications").select("*").eq("id", id).maybeSingle());
-    if (!row) return null;
+    if (!row) return fresh ? null : await super.get(id);
     const [documents, fields, findings] = await Promise.all([
       this.client.from("documents").select("*").eq("application_id", id),
       this.client.from("fields").select("*").eq("application_id", id),
@@ -87,18 +112,41 @@ export class SupabaseStore extends MemoryStore {
     return app;
   }
 
-  async list() {
-    const rows = assertSupabase(await this.client.from("applications").select("id,lgu_id,label,status,created_at"));
-    const findings = assertSupabase(await this.client.from("findings").select("application_id,status"));
+  async list(lguId) {
+    let applicationQuery = this.client.from("applications").select("id,lgu_id,label,status,created_at");
+    if (lguId) applicationQuery = applicationQuery.eq("lgu_id", lguId);
+    const rows = assertSupabase(await applicationQuery);
+    if (!rows.length) return [];
+    const applicationIds = rows.map((row) => row.id);
+    const [findingsResult, fieldsResult] = await Promise.all([
+      this.client.from("findings").select("application_id,status,field,message").in("application_id", applicationIds),
+      this.client.from("fields").select("application_id,field,value")
+        .in("application_id", applicationIds).in("field", ["business_name", "owner_name"]),
+    ]);
+    const findings = assertSupabase(findingsResult);
+    const fields = assertSupabase(fieldsResult);
     const counts = new Map();
+    const findingSummaries = new Map();
     for (const finding of findings) {
       const count = counts.get(finding.application_id) ?? { open_findings: 0, total_findings: 0 };
       count.total_findings += 1;
       if (finding.status === "open" || finding.status === "escalated") count.open_findings += 1;
       counts.set(finding.application_id, count);
+      if ((finding.status === "open" || finding.status === "escalated") && !findingSummaries.has(finding.application_id)) {
+        findingSummaries.set(finding.application_id, `${finding.field.replaceAll("_", " ")}: ${finding.message}`.slice(0, 160));
+      }
+    }
+    const names = new Map();
+    for (const field of fields) {
+      const namesForApplication = names.get(field.application_id) ?? {};
+      namesForApplication[field.field] = field.value;
+      names.set(field.application_id, namesForApplication);
     }
     return rows.map((row) => ({
       ...row,
+      business_name: names.get(row.id)?.business_name ?? null,
+      owner_name: names.get(row.id)?.owner_name ?? null,
+      finding_summary: findingSummaries.get(row.id) ?? null,
       open_findings: counts.get(row.id)?.open_findings ?? 0,
       total_findings: counts.get(row.id)?.total_findings ?? 0,
     })).sort((left, right) => right.created_at.localeCompare(left.created_at));
@@ -113,6 +161,20 @@ export class SupabaseStore extends MemoryStore {
     return rows.map((row) => ({
       application_id: row.application_id,
       action: row.action,
+      details: row.details ?? {},
+      timestamp: row.created_at,
+    }));
+  }
+
+  async applicationHistory(id) {
+    const rows = assertSupabase(await this.client.from("audit_log")
+      .select("application_id,action,actor,details,created_at")
+      .eq("application_id", id)
+      .order("created_at", { ascending: true }));
+    return rows.map((row) => ({
+      application_id: row.application_id,
+      action: row.action,
+      actor: row.actor,
       details: row.details ?? {},
       timestamp: row.created_at,
     }));
@@ -147,6 +209,7 @@ export class SupabaseStore extends MemoryStore {
       label: parsed.label,
       status: parsed.status,
       created_at: parsed.created_at,
+      verifications: parsed.verifications,
     }));
 
     const documentRows = parsed.documents.map((item) => ({ application_id: parsed.id, ...item }));

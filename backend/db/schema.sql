@@ -15,7 +15,8 @@ create table if not exists applications (
   lgu_id text not null,
   label text not null,
   status text not null check (status in ('uploaded', 'extracting', 'ready_for_review', 'approved', 'returned')),
-  created_at timestamptz not null
+  created_at timestamptz not null,
+  verifications jsonb not null default '[]'::jsonb
 );
 
 create table if not exists documents (
@@ -48,7 +49,7 @@ create table if not exists findings (
   id uuid primary key default gen_random_uuid(),
   application_id text not null references applications(id) on delete cascade,
   finding_id text not null,
-  type text not null check (type in ('missing_document', 'missing_field', 'cross_document_mismatch')),
+  type text not null check (type in ('missing_document', 'missing_field', 'cross_document_mismatch', 'validity_issue')),
   severity text not null check (severity in ('high', 'medium', 'low')),
   rule_id text not null,
   field text not null,

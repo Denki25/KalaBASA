@@ -206,3 +206,60 @@ export function compareAcrossDocuments(fields, requirements) {
 
   return findings;
 }
+
+// Accept only unambiguous calendar dates. Numeric day/month dates require human review.
+export function parseDocumentDate(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+  let year, month, day;
+  let match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (match) [, year, month, day] = match.map(Number);
+  else {
+    match = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/.exec(text);
+    const reversed = /^(\d{1,2})\s+([A-Za-z]+)\.?[,]?\s+(\d{4})$/.exec(text);
+    if (!match && !reversed) return null;
+    const name = (match?.[1] ?? reversed[2]).toLowerCase();
+    month = months.findIndex((item) => item === name || item.slice(0, 3) === name) + 1;
+    day = Number(match?.[2] ?? reversed[1]);
+    year = Number(match?.[3] ?? reversed[3]);
+  }
+  if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+export function reviewDate(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+export function checkValidity(fields, documents, requirements, asOf = reviewDate()) {
+  const uploaded = new Set(documents.map(documentName));
+  const findings = [];
+  for (const rule of requirements.validity_checks ?? []) {
+    if (!uploaded.has(rule.document)) continue;
+    const end = fields.find((f) => f.document === rule.document && f.field === rule.field);
+    const start = fields.find((f) => f.document === rule.document && f.field === rule.start_field);
+    const expiry = end?.verified === false ? null : parseDocumentDate(end?.value);
+    const beginning = start?.verified === false ? null : parseDocumentDate(start?.value);
+    const reasons = [];
+    if (!expiry) reasons.push(`The ${rule.field.replaceAll("_", " ")} date is missing, ambiguous, invalid, or not supported by the extracted source`);
+    else if (expiry < asOf) reasons.push(`The printed validity ended on ${expiry}; review date is ${asOf}`);
+    if (rule.start_field && !beginning) reasons.push(`The ${rule.start_field.replaceAll("_", " ")} date requires source review`);
+    else if (beginning && beginning > asOf) reasons.push(`The document starts on ${beginning}, after the review date ${asOf}`);
+    if (beginning && expiry && beginning > expiry) reasons.push("The start date is later than the expiry date");
+    if (!reasons.length) continue;
+    findings.push(makeFinding({
+      finding_id: `${rule.rule_id}-${rule.document}`,
+      type: "validity_issue", severity: rule.severity, rule_id: rule.rule_id, field: rule.field,
+      message: `${reasons.join(". ")}. Verify the source and applicable LGU requirement before deciding.`,
+      evidence: [end, ...(rule.start_field ? [start] : [])].map((field, index) => ({
+        document: rule.document, page: field?.page ?? 1,
+        source_text: field?.source_text?.trim() || null,
+        ...(!field?.source_text?.trim() ? { note: `No source text is available for ${index === 0 ? rule.field : rule.start_field}.` } : {}),
+      })),
+    }));
+  }
+  return findings;
+}

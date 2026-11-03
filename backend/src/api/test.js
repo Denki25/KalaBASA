@@ -236,6 +236,9 @@ test("application list returns validated summaries and open finding counts", asy
     assert.deepEqual(await response.json(), [{
       id: fixture.id,
       label: fixture.label,
+      business_name: fixture.fields.find((f) => f.field === "business_name")?.value,
+      owner_name: fixture.fields.find((f) => f.field === "owner_name")?.value,
+      finding_summary: `${fixture.findings[0].field.replaceAll("_", " ")}: ${fixture.findings[0].message}`.slice(0, 160),
       status: fixture.status,
       created_at: fixture.created_at,
       open_findings: fixture.findings.filter((finding) => ["open", "escalated"].includes(finding.status)).length,
@@ -248,7 +251,7 @@ test("activity endpoint maps audit actions to plain text, newest first", async (
   await withApi(async (baseUrl, store) => {
     const mappings = [
       ["application_created", {}, "New application received"],
-      ["extraction_completed", { findings: 2 }, "Inconsistency flagged"],
+      ["extraction_completed", { findings: 2 }, "2 finding(s) need review"],
       ["extraction_completed", { findings: 0 }, "Application processed"],
       ["application_processed", {}, "Application processed"],
       ["finding_updated", {}, "Finding reviewed"],
@@ -382,12 +385,110 @@ test("final decisions lock finding updates and all later approve or return attem
   }, [approved, returned]);
 });
 
-test("Approve is available only when no finding blocks the outcome", async () => {
+test("Approve requires document verification even when there are no findings", async () => {
   await withApi(async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/api/applications/${cleanFixture.id}/approve`, { method: "POST" })).status, 409);
+    for (const { document } of cleanFixture.documents) {
+      for (const kind of ["validity", "authenticity"]) {
+        const saved = await fetch(`${baseUrl}/api/applications/${cleanFixture.id}/verifications`, {
+          method: "PATCH", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ document, kind, status: "verified", evidence_note: "Issuing office confirmed reference TEST-123 and printed dates reviewed." }),
+        });
+        assert.equal(saved.status, 200);
+      }
+    }
     const response = await fetch(`${baseUrl}/api/applications/${cleanFixture.id}/approve`, { method: "POST" });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).status, "approved");
   }, cleanFixture);
+});
+
+test("verification validates evidence, uploaded documents, reviewer identity, and final locks", async () => {
+  await withApi(async (baseUrl, store) => {
+    const url = `${baseUrl}/api/applications/${cleanFixture.id}`;
+    const patch = (body) => fetch(`${url}/verifications`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const input = { document: "barangay_clearance", kind: "authenticity", status: "verified", evidence_note: "Confirmed issuer reference TEST-123." };
+    assert.equal((await patch({ ...input, evidence_note: " " })).status, 400);
+    assert.equal((await patch({ ...input, status: "fake" })).status, 400);
+    assert.equal((await patch({ ...input, reviewed_by: "attacker", reviewed_at: "2000-01-01T00:00:00Z" })).status, 200);
+    let app = await store.get(cleanFixture.id);
+    assert.equal(app.verifications[0].reviewed_by, "reviewer");
+    assert.notEqual(app.verifications[0].reviewed_at, "2000-01-01T00:00:00Z");
+    assert.equal(store.auditLog.at(-1).action, "document_verification_updated");
+    assert.equal((await patch({ ...input, status: "unverified", evidence_note: "Issuer could not confirm this registration." })).status, 200);
+    assert.equal((await store.get(cleanFixture.id)).verifications.length, 1, "updates replace prior attestation");
+    assert.equal((await fetch(`${url}/approve`, { method: "POST" })).status, 409);
+    assert.equal((await patch({ ...input, status: "rejected" })).status, 200);
+    assert.equal((await fetch(`${url}/return`, { method: "POST" })).status, 200);
+    assert.equal((await patch(input)).status, 409);
+    assert.equal((await fetch(`${url}/process`, { method: "POST" })).status, 409);
+  }, cleanFixture);
+  const partial = { ...cleanFixture, documents: cleanFixture.documents.filter((d) => d.document !== "barangay_clearance") };
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/applications/${partial.id}/verifications`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ document: "barangay_clearance", kind: "authenticity", status: "verified", evidence_note: "Cannot verify an absent document." }) });
+    assert.equal(response.status, 400);
+  }, partial);
+});
+
+test("decision rechecks expired dates and missing uploads despite recorded verification", async () => {
+  const verified = { ...cleanFixture, verifications: cleanFixture.documents.flatMap(({ document }) => ["validity", "authenticity"].map((kind) => ({ document, kind, status: "verified", evidence_note: "Manual source and issuer checks recorded TEST-123.", reviewed_by: "reviewer", reviewed_at: new Date().toISOString() }))) };
+  const expired = { ...verified, fields: verified.fields.map((f) => f.field === "valid_until" ? { ...f, value: "2020-01-01", source_text: "Valid until 2020-01-01" } : f) };
+  await withApi(async (baseUrl, store) => {
+    assert.equal((await fetch(`${baseUrl}/api/applications/${expired.id}/approve`, { method: "POST" })).status, 409);
+    assert.ok((await store.get(expired.id)).findings.some((f) => f.type === "validity_issue" && f.status === "open"));
+  }, expired);
+  const missing = { ...verified, documents: verified.documents.filter((d) => d.document !== "barangay_clearance") };
+  await withApi(async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/api/applications/${missing.id}/approve`, { method: "POST" })).status, 409);
+  }, missing);
+});
+
+test("reprocessing clears earlier verification evidence", async () => {
+  const application = { ...cleanFixture, verifications: [{ document: "barangay_clearance", kind: "authenticity", status: "verified", evidence_note: "Prior issuer confirmation reference TEST-123.", reviewed_by: "reviewer", reviewed_at: new Date().toISOString() }] };
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/applications/${application.id}/process`, { method: "POST" });
+    assert.equal(response.status, 202);
+    assert.deepEqual((await response.json()).verifications, []);
+  }, application);
+});
+
+test("Supabase verification evidence survives save and fresh load", async () => {
+  const tables = new Map();
+  const client = { from(table) {
+    return {
+      async upsert(rows) { tables.set(table, structuredClone(Array.isArray(rows) ? rows : [rows])); return { error: null }; },
+      select() { return {
+        eq() { return this; },
+        async maybeSingle() { return { data: tables.get(table)?.[0] ?? null, error: null }; },
+        then(resolve, reject) { return Promise.resolve({ data: tables.get(table) ?? [], error: null }).then(resolve, reject); },
+      }; },
+    };
+  } };
+  const verification = { document: "barangay_clearance", kind: "authenticity", status: "verified", evidence_note: "Issuer confirmed reference TEST-123.", reviewed_by: "reviewer@example.test", reviewed_at: new Date().toISOString() };
+  const store = new SupabaseStore(client);
+  await store.save({ ...cleanFixture, verifications: [verification] });
+  assert.deepEqual(tables.get("applications")[0].verifications, [verification]);
+  const reloaded = await new SupabaseStore(client).get(cleanFixture.id, { fresh: true });
+  assert.deepEqual(reloaded.verifications, [verification]);
+});
+
+test("upload explains a missing verification migration without exposing database details", async () => {
+  for (const error of [
+    { code: "42703", message: "column applications.verifications does not exist" },
+    { code: "PGRST204", message: "Could not find the 'verifications' column of 'applications' in the schema cache" },
+  ]) {
+    const store = new SupabaseStore({ from() {
+      return { async upsert() { return { error }; } };
+    } });
+    await withApi(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/applications`, { method: "POST" });
+      assert.equal(response.status, 503);
+      const body = await response.json();
+      assert.match(body.error, /backend\/db\/verification\.sql/);
+      assert.match(body.error, /Supabase SQL Editor/);
+      assert.doesNotMatch(body.error, /schema cache|column applications/);
+    }, fixture, { store });
+  }
 });
 
 test("mock application creation and process return fixture data without extraction", async () => {

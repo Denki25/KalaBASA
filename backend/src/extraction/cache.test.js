@@ -100,6 +100,57 @@ test("OpenAI-compatible adapter retries HTTP 429 and tolerates surrounding JSON 
   assert.equal(response.content[0].text, "{\"fields\":[]}");
 });
 
+test("Gemini retries timeouts and dropped connections, including response body failures", async () => {
+  for (const failure of ["timeout", "connection", "body"]) {
+    let calls = 0;
+    let reserved = 0;
+    const delays = [];
+    const client = createLlmClient({
+      provider: "gemini", apiKey: "fake-key", requestTimeoutMs: 1234,
+      onModelCall: async () => { reserved += 1; },
+      sleep: async (delay) => delays.push(delay),
+      fetchImpl: async (_url, options) => {
+        assert.ok(options.signal instanceof AbortSignal);
+        calls += 1;
+        if (calls === 1) {
+          if (failure === "timeout") throw new DOMException("Timed out", "TimeoutError");
+          if (failure === "connection") throw new TypeError("fetch failed");
+          return { ok: true, json: async () => { throw new DOMException("Timed out reading body", "TimeoutError"); } };
+        }
+        return new Response(JSON.stringify({ output_text: '{"fields":[]}' }));
+      },
+    });
+    const result = await client.messages.create({ model: "test-model", max_tokens: 100, messages: [] });
+    assert.equal(result.content[0].text, '{"fields":[]}');
+    assert.equal(calls, 2);
+    assert.equal(reserved, 2);
+    assert.deepEqual(delays, [250]);
+  }
+});
+
+test("Gemini timeout retries stop at four calls even when extraction retries the adapter", async () => {
+  let calls = 0;
+  const client = createLlmClient({
+    provider: "gemini", apiKey: "fake-key", sleep: async () => {},
+    fetchImpl: async () => { calls += 1; throw new DOMException("Timed out", "TimeoutError"); },
+  });
+  const request = { model: "test-model", max_tokens: 100, messages: [] };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await assert.rejects(client.messages.create(request), /Gemini timed out after four attempts/);
+  }
+  assert.equal(calls, 4);
+});
+
+test("Gemini does not retry invalid credentials", async () => {
+  let calls = 0;
+  const client = createLlmClient({
+    provider: "gemini", apiKey: "fake-key", sleep: async () => {},
+    fetchImpl: async () => { calls += 1; return new Response("Invalid API key", { status: 403 }); },
+  });
+  await assert.rejects(client.messages.create({ model: "test-model", messages: [] }), /HTTP 403/);
+  assert.equal(calls, 1);
+});
+
 test("extraction cache keys separate providers and models", () => {
   const input = { document: "dti_certificate", pages: ["sample"] };
   assert.notEqual(

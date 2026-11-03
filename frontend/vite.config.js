@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.AUTH_DISABLED": JSON.stringify(env.AUTH_DISABLED === "true"),
     },
     server: {
+      allowedHosts: [".ngrok-free.dev"],
       proxy: {
         "/api": "http://localhost:3000",
       },

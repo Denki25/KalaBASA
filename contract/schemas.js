@@ -47,7 +47,7 @@ export const ExtractedField = ExtractedFieldCore.extend({
 });
 
 // ---------- One finding ----------
-export const FINDING_TYPES = ["missing_document", "missing_field", "cross_document_mismatch"];
+export const FINDING_TYPES = ["missing_document", "missing_field", "cross_document_mismatch", "validity_issue"];
 export const Evidence = z.object({
   document: DocumentType,
   page: z.number().int().min(1),
@@ -72,6 +72,16 @@ export const Finding = FindingCore.extend({
 
 // ---------- One application ----------
 export const APPLICATION_STATUSES = ["uploaded", "extracting", "ready_for_review", "approved", "returned"];
+export const VerificationInput = z.object({
+  document: DocumentType,
+  kind: z.enum(["validity", "authenticity"]),
+  status: z.enum(["unverified", "verified", "rejected"]),
+  evidence_note: z.string().trim().min(10).max(4000),
+});
+export const Verification = VerificationInput.extend({
+  reviewed_by: z.string().min(1),
+  reviewed_at: z.string().datetime(),
+});
 export const Application = z.object({
   id: z.string(),
   lgu_id: z.string(),
@@ -86,15 +96,21 @@ export const Application = z.object({
   })),
   fields: z.array(ExtractedField),
   findings: z.array(Finding),
+  verifications: z.array(Verification).default([]),
 });
 
 // ---------- Approve locking (ASSUMPTION: confirm with the team) ----------
 // "locked"  : at least one finding is still open or escalated -> reviewer cannot finish yet
 // "return"  : no open/escalated, at least one finding CONFIRMED as a real issue -> return for correction
-// "approve" : every finding dismissed (or there are none) -> Approve button unlocks
+// "approve" : findings resolved and validity/authenticity verified for every uploaded document.
+// The API also requires every configured required upload and rechecks dates before approval.
 export function nextOutcome(app) {
+  if (app.status !== "ready_for_review") return "locked";
   const s = app.findings.map((f) => f.status);
   if (s.some((x) => x === "open" || x === "escalated")) return "locked";
-  if (s.some((x) => x === "confirmed")) return "return";
+  if (s.some((x) => x === "confirmed") || app.verifications?.some((v) => v.status === "rejected")) return "return";
+  if (!app.documents?.length || app.documents.some(({ document }) =>
+    ["validity", "authenticity"].some((kind) => !app.verifications?.some((v) =>
+      v.document === document && v.kind === kind && v.status === "verified" && v.evidence_note?.trim().length >= 10)))) return "locked";
   return "approve";
 }

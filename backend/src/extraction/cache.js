@@ -117,7 +117,11 @@ export function createLlmClient({
   anthropicClientFactory = (key) => new Anthropic({ apiKey: key, maxRetries: 0 }),
   sleep = defaultSleep,
   onModelCall = async () => {},
+  requestTimeoutMs = Number(process.env.LLM_REQUEST_TIMEOUT_MS ?? 60000),
 }) {
+  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+    throw new Error("LLM_REQUEST_TIMEOUT_MS must be a positive number of milliseconds.");
+  }
   let httpAttempts = 0;
   let terminalHttpError = null;
   if (provider === "gemini") {
@@ -128,28 +132,44 @@ export function createLlmClient({
           if (!request.model) throw new Error("KALABASA_MODEL is required for the gemini provider.");
           if (terminalHttpError) throw terminalHttpError;
           let response;
+          let payload;
           while (httpAttempts < 4) {
             await onModelCall();
             httpAttempts += 1;
-            response = await fetchImpl("https://generativelanguage.googleapis.com/v1beta/interactions", {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                "x-goog-api-key": apiKey,
-              },
-              body: JSON.stringify({
-                model: request.model,
-                system_instruction: request.system,
-                input: request.messages.map((message) => message.content).join("\n\n"),
-                response_format: { type: "text", mime_type: "application/json" },
-                generation_config: {
-                  max_output_tokens: request.max_tokens,
-                  thinking_level: process.env.GEMINI_THINKING_LEVEL || "minimal",
+            try {
+              response = await fetchImpl("https://generativelanguage.googleapis.com/v1beta/interactions", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  "x-goog-api-key": apiKey,
                 },
-              }),
-              signal: AbortSignal.timeout(60000),
-            });
-            if (response.ok) break;
+                body: JSON.stringify({
+                  model: request.model,
+                  system_instruction: request.system,
+                  input: request.messages.map((message) => message.content).join("\n\n"),
+                  response_format: { type: "text", mime_type: "application/json" },
+                  generation_config: {
+                    max_output_tokens: request.max_tokens,
+                    thinking_level: process.env.GEMINI_THINKING_LEVEL || "minimal",
+                  },
+                }),
+                signal: AbortSignal.timeout(requestTimeoutMs),
+              });
+              if (response.ok) {
+                payload = await response.json();
+                break;
+              }
+            } catch (error) {
+              const timedOut = error.name === "TimeoutError" || error.name === "AbortError";
+              const networkFailure = error instanceof TypeError || ["ECONNRESET", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(error.cause?.code);
+              if (!timedOut && !networkFailure) throw error;
+              if (httpAttempts === 4) {
+                terminalHttpError = new Error(`Gemini ${timedOut ? "timed out" : "could not be reached"} after four attempts. Please retry when the connection or AI service recovers.`, { cause: error });
+                throw terminalHttpError;
+              }
+              await sleep(250 * 2 ** (httpAttempts - 1));
+              continue;
+            }
             const detail = await response.text().catch(() => "");
             const retryable = response.status === 429 || response.status >= 500;
             if (!retryable || httpAttempts === 4) {
@@ -161,7 +181,6 @@ export function createLlmClient({
               ?? 250 * 2 ** (httpAttempts - 1);
             await sleep(delay);
           }
-          const payload = await response.json();
           return { content: [{ type: "text", text: normalizeModelJson(extractGeminiText(payload)) }] };
         },
       },

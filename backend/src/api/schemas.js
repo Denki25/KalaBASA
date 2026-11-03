@@ -5,6 +5,9 @@ export const CreateApplicationResponse = z.object({ id: z.string() });
 export const ApplicationSummary = z.object({
   id: z.string(),
   label: z.string(),
+  business_name: z.string().nullable().optional(),
+  owner_name: z.string().nullable().optional(),
+  finding_summary: z.string().nullable().optional(),
   status: z.string(),
   created_at: z.string(),
   open_findings: z.number().int().nonnegative(),
@@ -54,6 +57,13 @@ export const Requirements = z.object({
     documents: z.array(z.enum(DOCUMENT_TYPES)),
     severity: z.enum(["high", "medium", "low"]),
   })),
+  validity_checks: z.array(z.object({
+    rule_id: z.string(),
+    document: z.enum(DOCUMENT_TYPES),
+    field: z.string(),
+    start_field: z.string().optional(),
+    severity: z.enum(["high", "medium", "low"]),
+  })).default([]),
   do_not_compare: z.array(z.string()),
   normalization: z.record(z.string(), z.unknown()),
 });

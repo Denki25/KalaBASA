@@ -1,6 +1,6 @@
 const APPLICATION_STATUSES = ["uploaded", "extracting", "ready_for_review", "approved", "returned"];
 const FINDING_STATUSES = ["open", "confirmed", "dismissed", "escalated"];
-const FINDING_TYPES = ["missing_document", "missing_field", "cross_document_mismatch"];
+const FINDING_TYPES = ["missing_document", "missing_field", "cross_document_mismatch", "validity_issue"];
 const SEVERITIES = ["high", "medium", "low"];
 
 export function buildReport(snapshot, { from, to }) {

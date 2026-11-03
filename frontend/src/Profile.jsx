@@ -36,12 +36,6 @@ export default function Profile({ user, lguName, onSignOut }) {
   }
 
   return <section className="profile-page">
-    <header className="profile-heading">
-      <span className="eyebrow">REVIEWER ACCOUNT</span>
-      <h1>Profile</h1>
-      <p>Manage your account and review preferences.</p>
-    </header>
-
     <section className="profile-account-panel" aria-labelledby="account-heading">
       <div className="profile-account-row">
         <span className="profile-avatar" aria-hidden="true">{initialsFor(user)}</span>

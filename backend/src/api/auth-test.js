@@ -134,11 +134,28 @@ test("viewers can read but cannot change anything", async () => {
 
 test("approving records the real user in the audit log", async () => {
   await withApi(async (call, store) => {
+    for (const { document } of clean.documents) {
+      for (const kind of ["validity", "authenticity"]) {
+        const saved = await call("/api/applications/app-lgu-a/verifications", "tok-a", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ document, kind, status: "verified", evidence_note: "Issuer confirmation TEST-123 and source validity reviewed." }) });
+        assert.equal(saved.status, 200);
+        const verification = (await saved.json()).verifications.at(-1);
+        assert.equal(verification.reviewed_by, "reviewer.a@test.com");
+      }
+    }
     const response = await call("/api/applications/app-lgu-a/approve", "tok-a", { method: "POST" });
     assert.equal(response.status, 200);
     const last = store.auditLog.at(-1);
-    assert.equal(last.action, "application_approve");
+    assert.equal(last.action, "application_approved");
     assert.equal(last.actor, "reviewer.a@test.com");
+  });
+});
+
+test("verification writes enforce LGU boundaries and reviewer roles", async () => {
+  await withApi(async (call) => {
+    const options = { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ document: "barangay_clearance", kind: "authenticity", status: "verified", evidence_note: "Issuing office confirmation TEST-123." }) };
+    assert.equal((await call("/api/applications/app-lgu-a/verifications", "tok-b", options)).status, 404);
+    assert.equal((await call("/api/applications/app-lgu-a/verifications", "tok-viewer", options)).status, 403);
+    assert.equal((await call("/api/applications/app-lgu-a/verifications", null, options)).status, 401);
   });
 });
 
