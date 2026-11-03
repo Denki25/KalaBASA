@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       "import.meta.env.MOCK_MODE": JSON.stringify(env.MOCK_MODE === "true"),
+      "import.meta.env.AUTH_DISABLED": JSON.stringify(env.AUTH_DISABLED === "true"),
     },
     server: {
       proxy: {
